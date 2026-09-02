@@ -1,0 +1,22 @@
+services:
+  llm-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    ports:
+      - "0.0.0.0:8062:8060"
+    ipc: host
+    shm_size: 64G
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    command: /bin/bash -c "cd / && jupyter lab --no-browser --ServerApp.root_dir=/ --ServerApp.password='sha1:9e2d5e12ec01:559add31d1581729aa57ed788127f80cc6c131a7' --allow-root --ip=0.0.0.0 --port=8060"

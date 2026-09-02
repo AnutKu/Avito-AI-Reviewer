@@ -1,0 +1,14 @@
+artifact_uri: /app/mlruns/494383377934957982/c4fc5c6470c7462496903a147a15f3fd/artifacts
+end_time: 1760971440161
+entry_point_name: ''
+experiment_id: '494383377934957982'
+lifecycle_stage: active
+run_id: c4fc5c6470c7462496903a147a15f3fd
+run_name: exp-0-bs8gas4lr0.0003    optimizeradamw_torch_fusedlr_schedulercosinetorch_compileFalsewarmup_steps50
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1760971430868
+status: 4
+tags: []
+user_id: root

@@ -1,0 +1,12 @@
+/__pycache__
+/models/__pycache__
+/repositories/__pycache__
+/routers/__pycache__
+/services/__pycache__
+/tests/__pycache__
+.benchmarks
+.pytest_cache
+backend_project_p1/
+.venv/
+venv/
+env/

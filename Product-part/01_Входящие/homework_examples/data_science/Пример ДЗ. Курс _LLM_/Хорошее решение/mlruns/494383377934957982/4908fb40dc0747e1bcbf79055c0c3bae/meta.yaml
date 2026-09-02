@@ -1,0 +1,14 @@
+artifact_uri: /app/mlruns/494383377934957982/4908fb40dc0747e1bcbf79055c0c3bae/artifacts
+end_time: 1760962467808
+entry_point_name: ''
+experiment_id: '494383377934957982'
+lifecycle_stage: active
+run_id: 4908fb40dc0747e1bcbf79055c0c3bae
+run_name: exp-0-bs8gas4lr15e-4
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1760961791496
+status: 4
+tags: []
+user_id: root
