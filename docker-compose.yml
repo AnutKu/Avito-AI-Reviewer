@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-avito}
       POSTGRES_DB: ${POSTGRES_DB:-avito_ai_reviewer}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -49,7 +49,7 @@ services:
       FEATURE_COURSE_DEBT: ${FEATURE_COURSE_DEBT:-false}
       FEATURE_TELEGRAM: ${FEATURE_TELEGRAM:-false}
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8081}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,13 +65,51 @@ services:
     build: ./ui
     container_name: avito-ai-ui
     ports:
-      - "${UI_PORT:-3000}:80"
+      - "${UI_PORT:-8080}:80"
     depends_on:
       api:
         condition: service_healthy
+      taskcreater:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- AI-помощник лектора: конструктор ДЗ + валидация критериев агентами ---
+  # Ходит в тот же контейнер postgres, но в СВОЮ базу `taskcreater`
+  # (создаётся сервисом при старте) — схема не пересекается с core api.
+  taskcreater:
+    build: ./task-creater
+    container_name: avito-ai-taskcreater
+    environment:
+      TASKCREATER_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-avito}:${POSTGRES_PASSWORD:-avito}@postgres:5432/taskcreater
+      # LLM: OpenAI-совместимый шлюз (провайдер-агностик через litellm).
+      # По умолчанию сервис поднимается в fake-режиме (детерминированные ответы,
+      # без вызовов LLM) — как и остальные AI-модули этого этапа. Для реальных
+      # прогонов задайте креды шлюза в .env и TASKCREATER_LLM_FAKE=0.
+      TASKCREATER_LLM_FAKE: ${TASKCREATER_LLM_FAKE:-1}
+      # префикс, под которым сервис проксируется единым кабинетом (ui/nginx.conf)
+      TASKCREATER_ROOT_PATH: /task-creater
+      TASKCREATER_LLM_API_BASE: ${TASKCREATER_LLM_API_BASE:-}
+      TASKCREATER_LLM_API_KEY: ${TASKCREATER_LLM_API_KEY:-}
+      TASKCREATER_MODEL_FAST: ${TASKCREATER_MODEL_FAST:-google/gemini-3.5-flash-lite}
+      TASKCREATER_MODEL_SMART: ${TASKCREATER_MODEL_SMART:-google/gemini-3.6-flash}
+      TASKCREATER_RUB_PER_USD: ${TASKCREATER_RUB_PER_USD:-90}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TASKCREATER_LANGFUSE_PUBLIC_KEY: ${TASKCREATER_LANGFUSE_PUBLIC_KEY:-}
+      TASKCREATER_LANGFUSE_SECRET_KEY: ${TASKCREATER_LANGFUSE_SECRET_KEY:-}
+    ports:
+      - "${TASKCREATER_PORT:-8082}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
       timeout: 3s
       retries: 10
 
