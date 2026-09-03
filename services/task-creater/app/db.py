@@ -7,16 +7,20 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
 from app.config import settings
+
+log = logging.getLogger("taskcreater.db")
 
 engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
@@ -83,13 +87,42 @@ class EditDecision(Base):
     payload: Mapped[dict] = mapped_column(JSON)
 
 
+async def _ensure_database() -> None:
+    """Создаёт целевую БД на общем сервере Postgres, если её ещё нет.
+
+    Позволяет ходить в тот же контейнер postgres, что и остальной стек, без
+    отдельного контейнера БД под этот сервис. Своя БД (а не общая) — чтобы схема
+    не пересекалась с core api. Идемпотентно, переживает уже существующий volume.
+    """
+    url = engine.url
+    if not url.get_backend_name().startswith("postgresql"):
+        return
+    dbname = (url.database or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]+", dbname):
+        return
+
+    admin_url = url.set(drivername="postgresql+asyncpg", database="postgres")
+    admin_engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        async with admin_engine.connect() as conn:
+            exists = await conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": dbname}
+            )
+            if not exists:
+                await conn.execute(text(f'CREATE DATABASE "{dbname}"'))
+                log.info("создана БД %s на общем сервере postgres", dbname)
+    except Exception as exc:  # noqa: BLE001 — сервер не готов / нет прав / гонка старта
+        log.warning("не удалось подготовить БД %s (%s); полагаемся, что она уже есть", dbname, exc)
+    finally:
+        await admin_engine.dispose()
+
+
 async def init_models() -> None:
+    await _ensure_database()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Лёгкая миграция для БД, созданных до расширения колонки (без Alembic).
         if engine.url.get_backend_name().startswith("postgresql"):
-            from sqlalchemy import text
-
             try:
                 await conn.execute(text("ALTER TABLE validation_runs ALTER COLUMN progress TYPE TEXT"))
             except Exception:  # noqa: BLE001 — колонка уже TEXT или прав нет

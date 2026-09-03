@@ -54,5 +54,39 @@ services:
       timeout: 3s
       retries: 10
 
+  # --- AI-помощник лектора: конструктор ДЗ + валидация критериев агентами ---
+  # Ходит в тот же контейнер postgres, но в СВОЮ базу `taskcreater`
+  # (создаётся сервисом при старте) — схема не пересекается с core api.
+  taskcreater:
+    build: ./services/task-creater
+    container_name: avito-ai-taskcreater
+    environment:
+      TASKCREATER_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-avito}:${POSTGRES_PASSWORD:-avito}@postgres:5432/taskcreater
+      # LLM: OpenAI-совместимый шлюз (провайдер-агностик через litellm).
+      # По умолчанию сервис поднимается в fake-режиме (детерминированные ответы,
+      # без вызовов LLM) — как и остальные AI-модули этого этапа. Для реальных
+      # прогонов задайте креды шлюза в .env и TASKCREATER_LLM_FAKE=0.
+      TASKCREATER_LLM_FAKE: ${TASKCREATER_LLM_FAKE:-1}
+      TASKCREATER_LLM_API_BASE: ${TASKCREATER_LLM_API_BASE:-}
+      TASKCREATER_LLM_API_KEY: ${TASKCREATER_LLM_API_KEY:-}
+      TASKCREATER_MODEL_FAST: ${TASKCREATER_MODEL_FAST:-google/gemini-3.5-flash-lite}
+      TASKCREATER_MODEL_SMART: ${TASKCREATER_MODEL_SMART:-google/gemini-3.6-flash}
+      TASKCREATER_RUB_PER_USD: ${TASKCREATER_RUB_PER_USD:-90}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TASKCREATER_LANGFUSE_PUBLIC_KEY: ${TASKCREATER_LANGFUSE_PUBLIC_KEY:-}
+      TASKCREATER_LANGFUSE_SECRET_KEY: ${TASKCREATER_LANGFUSE_SECRET_KEY:-}
+    ports:
+      - "${TASKCREATER_PORT:-8100}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
 volumes:
   pgdata:

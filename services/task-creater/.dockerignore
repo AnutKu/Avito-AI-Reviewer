@@ -8,3 +8,7 @@ __pycache__
 tests
 uv.lock
 .git
+probe-out/
+out/
+nohup.out
+*.log

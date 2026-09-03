@@ -13,13 +13,25 @@ docker compose up --build
 
 - кабинет: <http://localhost:3000>;
 - OpenAPI: <http://localhost:8000/docs>;
-- healthcheck: <http://localhost:8000/health>.
+- healthcheck: <http://localhost:8000/health>;
+- AI-помощник лектора (services/task-creater): <http://localhost:8100/docs>.
 
 Если порт занят, его можно переопределить без изменения файлов:
 
 ```bash
 UI_PORT=3001 docker compose up --build
 ```
+
+Поднять только AI-помощник лектора:
+
+```bash
+docker compose up --build taskcreater
+```
+
+По умолчанию `taskcreater` работает в fake-режиме (детерминированные ответы, без
+вызовов LLM) — как и остальные AI-модули этого этапа. Для реальных прогонов задайте
+`TASKCREATER_LLM_FAKE=0` и креды шлюза в `.env` (см. `.env.example`). Детали,
+сквозной сценарий и проверялка эндпоинтов — в [services/task-creater/README.md](services/task-creater/README.md).
 
 На стартовом экране есть демо-вход для каждой роли. База заполняется учебным курсом, рубрикой, работами в разных статусах, ревью, сигналами и уведомлениями. Данные создаются только в пустой БД.
 
@@ -39,8 +51,11 @@ UI_PORT=3001 docker compose up --build
 ## Структура
 
 ```text
-api/   FastAPI, core-домен, PostgreSQL, mock feature contracts
-ui/    Vue 3, ролевые feature-модули, nginx
+api/                    FastAPI, core-домен, PostgreSQL, mock feature contracts
+ui/                     Vue 3, ролевые feature-модули, nginx
+services/task-creater/  AI-помощник лектора: идея → ДЗ с критериями + валидация
+                        критериев мультиагентным графом (LangGraph); отдельная
+                        база `taskcreater` в общем сервере postgres
 ```
 
 AI worker, LLM gateway и Telegram не входят в этот этап. Их места зафиксированы контрактами и фиче-флагами; интерфейс явно помечает мок-модули и агрегаты на фикстурах.
