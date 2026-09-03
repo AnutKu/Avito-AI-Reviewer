@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: avito-ai-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-avito}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-avito}
+      POSTGRES_DB: ${POSTGRES_DB:-avito_ai_reviewer}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-avito} -d ${POSTGRES_DB:-avito_ai_reviewer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: ./api
+    container_name: avito-ai-api
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-avito}:${POSTGRES_PASSWORD:-avito}@postgres:5432/${POSTGRES_DB:-avito_ai_reviewer}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      SEED_ON_START: ${SEED_ON_START:-true}
+      FEATURE_DISTRIBUTION: ${FEATURE_DISTRIBUTION:-true}
+      FEATURE_RUBRIC_BUILDER: ${FEATURE_RUBRIC_BUILDER:-true}
+      FEATURE_ANALYTICS: ${FEATURE_ANALYTICS:-true}
+      FEATURE_BLITZ: ${FEATURE_BLITZ:-true}
+      FEATURE_COURSE_DEBT: ${FEATURE_COURSE_DEBT:-false}
+      FEATURE_TELEGRAM: ${FEATURE_TELEGRAM:-false}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ui:
+    build: ./ui
+    container_name: avito-ai-ui
+    ports:
+      - "${UI_PORT:-3000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
