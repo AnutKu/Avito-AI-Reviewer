@@ -37,10 +37,18 @@ async def test_generate_validate_apply_export(client):
     assert r.status_code == 201, r.text
     task = r.json()
     task_id = task["id"]
+    root_id = task["root_id"]
     assert task["version"] == 1 and task["source"] == "generated"
     assert task["root_id"] == task_id
     assert abs(task["total_points"] - 10) < 1e-6
     assert len(task["data"]["criteria"]) >= 3
+
+    # 1a. менеджер задач: задача видна в списке со статусом draft, прогонов нет
+    lst = (await client.get("/tasks")).json()
+    row = next(x for x in lst if x["root_id"] == root_id)
+    assert row["status"] == "draft" and row["last_run"] is None
+    assert row["criteria_count"] == len(task["data"]["criteria"])
+    assert (await client.get(f"/tasks/{root_id}/runs")).json() == []
 
     # 2. валидация
     r = await client.post(f"/tasks/{task_id}/validate", json={"max_rounds": 2})
@@ -59,6 +67,15 @@ async def test_generate_validate_apply_export(client):
     assert res["proposed_edits"], "ожидались предложенные правки рубрики"
     edit_ids = [e["id"] for e in res["proposed_edits"]]
 
+    # 2a. после успешного прогона задача в статусе needs_review, прогон в истории
+    row = next(x for x in (await client.get("/tasks")).json() if x["root_id"] == root_id)
+    assert row["status"] == "needs_review"
+    assert row["last_run"]["status"] == "succeeded" and row["last_run"]["proposed_edits"] > 0
+    runs = (await client.get(f"/tasks/{root_id}/runs")).json()
+    assert len(runs) == 1 and runs[0]["id"] == run_id
+    only_review = (await client.get("/tasks", params={"status": "needs_review"})).json()
+    assert any(x["root_id"] == root_id for x in only_review)
+
     # 3. решение человека: принять все правки
     decisions = {
         "decisions": [{"edit_id": eid, "accept": True} for eid in edit_ids],
@@ -71,6 +88,10 @@ async def test_generate_validate_apply_export(client):
     assert revised["changelog"][-1]["kind"] == "criteria_revision"
     # правки применились: где-то в описаниях появился маркер уточнения
     assert any("[уточнено]" in c["description"] for c in revised["data"]["criteria"])
+
+    # 3a. статус задачи стал revised, в списке — последняя версия
+    row = next(x for x in (await client.get("/tasks")).json() if x["root_id"] == root_id)
+    assert row["status"] == "revised" and row["version"] == 2 and row["id"] == revised["id"]
 
     # 4. экспорт: ревьюерский vs студенческий
     r = await client.get(f"/tasks/{revised['id']}/export", params={"format": "markdown"})

@@ -19,7 +19,9 @@ from app.schemas import (
     DecisionsIn,
     GenerateTaskIn,
     PersonaOut,
+    RunBrief,
     TaskDraftOut,
+    TaskListItem,
     TaskPatchIn,
     ValidationConfigIn,
     ValidationResult,
@@ -71,6 +73,16 @@ async def get_idea(idea_id: str, session: AsyncSession = Depends(get_session)) -
 # --------------------------------------------------------------------------- #
 
 
+@router.get("/tasks", response_model=list[TaskListItem], tags=["tasks"])
+async def list_tasks(
+    status: str | None = Query(None, description="фильтр по статусу"),
+    q: str | None = Query(None, description="поиск по заголовку"),
+    session: AsyncSession = Depends(get_session),
+) -> list[TaskListItem]:
+    """Менеджер задач: по строке на задание (последняя версия + последний прогон)."""
+    return await tasks.list_tasks(session, status=status, q=q)
+
+
 @router.post("/tasks/generate", response_model=TaskDraftOut, tags=["tasks"], status_code=201)
 async def generate_task(body: GenerateTaskIn, session: AsyncSession = Depends(get_session)) -> TaskDraftOut:
     if not body.idea_id and not body.idea:
@@ -108,6 +120,12 @@ async def get_task_version(
     if not row:
         raise HTTPException(404, "версия не найдена")
     return tasks.to_out(row)
+
+
+@router.get("/tasks/{root_id}/runs", response_model=list[RunBrief], tags=["tasks"])
+async def list_task_runs(root_id: str, session: AsyncSession = Depends(get_session)) -> list[RunBrief]:
+    """История прогонов валидации по всем версиям задания, новые сверху."""
+    return await tasks.list_runs(session, root_id)
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskDraftOut, tags=["tasks"])

@@ -20,8 +20,10 @@ from app.schemas import (
     Criterion,
     CriterionEdit,
     DecisionsIn,
+    RunBrief,
     TaskDraftData,
     TaskDraftOut,
+    TaskListItem,
     TaskPatchIn,
     ValidationResult,
 )
@@ -133,6 +135,120 @@ async def list_versions(session: AsyncSession, root_id: str) -> list[TaskDraft]:
         select(TaskDraft).where(TaskDraft.root_id == root_id).order_by(TaskDraft.version.asc())
     )
     return list(res.scalars().all())
+
+
+# --------------------------------------------------------------------------- #
+#  Менеджер задач: список со статусами и история прогонов
+# --------------------------------------------------------------------------- #
+
+
+def _run_brief(run: ValidationRun) -> RunBrief:
+    res = ValidationResult(**run.result) if run.result else None
+    return RunBrief(
+        id=run.id,
+        task_draft_id=run.task_draft_id,
+        status=run.status,  # type: ignore[arg-type]
+        progress=run.progress,
+        converged=res.converged if res else None,
+        open_findings=len(res.open_findings) if res else 0,
+        proposed_edits=len(res.proposed_edits) if res else 0,
+        rounds=len(res.rounds) if res else 0,
+        cost_rub=res.metrics.cost_rub if res else 0.0,
+        created_at=run.created_at or datetime.now(UTC),
+        updated_at=run.updated_at or run.created_at or datetime.now(UTC),
+    )
+
+
+def _derive_status(latest: TaskDraft, run: RunBrief | None) -> str:
+    if run is None:
+        return "revised" if latest.source == "revised" else "draft"
+    if run.status in ("pending", "running"):
+        return "validating"
+    if run.status == "failed":
+        return "failed"
+    # succeeded
+    if latest.source == "revised":
+        return "revised"
+    if run.proposed_edits or run.open_findings:
+        return "needs_review"
+    return "checked"
+
+
+async def list_tasks(
+    session: AsyncSession, *, status: str | None = None, q: str | None = None
+) -> list[TaskListItem]:
+    """Одна строка на root_id — последняя версия + последний прогон валидации."""
+    drafts = list(
+        (await session.execute(select(TaskDraft).order_by(TaskDraft.version.desc()))).scalars().all()
+    )
+    latest_by_root: dict[str, TaskDraft] = {}
+    root_of_draft: dict[str, str] = {}
+    for d in drafts:
+        root_of_draft[d.id] = d.root_id
+        latest_by_root.setdefault(d.root_id, d)  # первая при version desc = максимальная
+
+    runs = list(
+        (await session.execute(select(ValidationRun).order_by(ValidationRun.created_at.desc())))
+        .scalars()
+        .all()
+    )
+    latest_run_by_root: dict[str, ValidationRun] = {}
+    for r in runs:
+        root = root_of_draft.get(r.task_draft_id)
+        if root and root not in latest_run_by_root:
+            latest_run_by_root[root] = r
+
+    ideas = {i.id: i.payload for i in (await session.execute(select(CourseIdea))).scalars().all()}
+
+    items: list[TaskListItem] = []
+    for root, latest in latest_by_root.items():
+        data = TaskDraftData(**latest.data)
+        brief = _run_brief(latest_run_by_root[root]) if root in latest_run_by_root else None
+        st = _derive_status(latest, brief)
+        if status and st != status:
+            continue
+        if q and q.lower() not in data.title.lower():
+            continue
+        idea = ideas.get(latest.idea_id) or {}
+        items.append(
+            TaskListItem(
+                root_id=root,
+                id=latest.id,
+                title=data.title,
+                track=idea.get("track"),
+                task_format=idea.get("task_format"),
+                version=latest.version,
+                source=latest.source,  # type: ignore[arg-type]
+                total_points=data.total_points,
+                criteria_count=len(data.criteria),
+                status=st,  # type: ignore[arg-type]
+                created_at=latest.created_at or datetime.now(UTC),
+                updated_at=(brief.updated_at if brief else latest.created_at) or datetime.now(UTC),
+                last_run=brief,
+            )
+        )
+    items.sort(key=lambda x: x.updated_at, reverse=True)
+    return items
+
+
+async def list_runs(session: AsyncSession, root_id: str) -> list[RunBrief]:
+    """Все прогоны валидации по любой версии задания, новые сверху."""
+    versions = await list_versions(session, root_id)
+    ids = [v.id for v in versions]
+    if not ids:
+        return []
+    runs = (
+        (
+            await session.execute(
+                select(ValidationRun)
+                .where(ValidationRun.task_draft_id.in_(ids))
+                .order_by(ValidationRun.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_run_brief(r) for r in runs]
 
 
 async def _next_version_row(

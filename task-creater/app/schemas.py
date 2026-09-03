@@ -370,3 +370,47 @@ class PersonaOut(BaseModel):
     key: str
     title: str
     description: str
+
+
+# --------------------------------------------------------------------------- #
+#  Менеджер задач: список и статусы
+# --------------------------------------------------------------------------- #
+
+TaskStatus = Literal[
+    "draft",  # сгенерировано, валидация ещё не запускалась
+    "validating",  # идёт прогон валидации
+    "needs_review",  # прогон завершён, есть открытые находки/правки — ждёт решения человека
+    "checked",  # прогон завершён, рубрика сошлась без правок
+    "revised",  # правки применены — есть версия revised
+    "failed",  # последний прогон упал
+]
+
+
+class RunBrief(BaseModel):
+    id: str
+    task_draft_id: str
+    status: Literal["pending", "running", "succeeded", "failed"]
+    progress: str
+    converged: bool | None = None
+    open_findings: int = 0
+    proposed_edits: int = 0
+    rounds: int = 0
+    cost_rub: float = 0.0
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskListItem(BaseModel):
+    root_id: str
+    id: str  # последняя версия
+    title: str
+    track: str | None = None
+    task_format: str | None = None
+    version: int
+    source: Literal["generated", "edited", "revised"]
+    total_points: float
+    criteria_count: int
+    status: TaskStatus
+    created_at: datetime
+    updated_at: datetime
+    last_run: RunBrief | None = None
