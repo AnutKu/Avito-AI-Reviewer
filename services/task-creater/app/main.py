@@ -47,6 +47,7 @@ app = FastAPI(
     version=__version__,
     description=DESCRIPTION,
     lifespan=lifespan,
+    root_path=settings.root_path,
 )
 app.include_router(router)
 

@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 60.0
     solver_concurrency: int = 4
 
+    # Префикс, под которым сервис проксируется снаружи (напр. "/task-creater" в
+    # nginx единого кабинета) — чтобы Swagger/OpenAPI отдавали правильные пути.
+    root_path: str = ""
+
     # --- Наблюдаемость (опционально) ------------------------------------
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None

@@ -11,10 +11,11 @@ docker compose up --build
 
 После запуска:
 
-- кабинет: <http://localhost:3000>;
+- кабинет: <http://localhost:3000> (методист → «AI-конструктор ДЗ»);
 - OpenAPI: <http://localhost:8000/docs>;
 - healthcheck: <http://localhost:8000/health>;
-- AI-помощник лектора (services/task-creater): <http://localhost:8100/docs>.
+- AI-помощник лектора: экран в кабинете + OpenAPI на <http://localhost:3000/task-creater/docs>
+  (единый кабинет проксирует его на `/task-creater/`; прямой порт — `:8100`).
 
 Если порт занят, его можно переопределить без изменения файлов:
 
@@ -27,6 +28,10 @@ UI_PORT=3001 docker compose up --build
 ```bash
 docker compose up --build taskcreater
 ```
+
+В кабинете методиста экран **«AI-конструктор ДЗ»** (флаг `FEATURE_RUBRIC_BUILDER`):
+идея → задание с критериями → прогон валидации агентами → находки и правки →
+применение. Эндпоинты сервиса ходят same-origin через `/task-creater/*`.
 
 По умолчанию `taskcreater` работает в fake-режиме (детерминированные ответы, без
 вызовов LLM) — как и остальные AI-модули этого этапа. Для реальных прогонов задайте
