@@ -296,6 +296,36 @@ class CourseIdeaIn(BaseModel):
 class GenerateTaskIn(BaseModel):
     idea_id: str | None = None
     idea: CourseIdeaIn | None = None
+    background: bool = Field(
+        default=False,
+        description="true — вернуть черновик сразу (статус generating), генерировать в фоне",
+    )
+
+
+class ImportTaskIn(BaseModel):
+    """Добавить УЖЕ существующее задание (не сгенерированное сервисом) и проверить его."""
+
+    title: str
+    track: str = "General"
+    context_md: str = ""
+    statement_md: str
+    deliverables: list[str] = Field(default_factory=list)
+    submission_format: str = ""
+    public_rubric_note: str = ""
+    learning_objectives: list[str] = Field(default_factory=list)
+    criteria: list[Criterion]
+    reference_solution_md: str = ""
+    common_mistakes: list[str] = Field(default_factory=list)
+    reviewer_notes: str = ""
+    total_points: float | None = Field(default=None, description="если задано — веса нормируются к нему")
+
+
+class GradeSolutionIn(BaseModel):
+    """Демо-проверка: предварительное ревью одного решения по текущей рубрике задания."""
+
+    solution_md: str = Field(min_length=1, description="текст решения студента (или эталон)")
+    approach_notes: str = Field(default="", description="как студент шёл к решению (опционально)")
+    persona: str | None = Field(default=None, description="метка профиля для отчёта")
 
 
 class ValidationConfigIn(BaseModel):
@@ -347,6 +377,8 @@ class TaskDraftOut(BaseModel):
     root_id: str
     version: int
     source: Literal["generated", "edited", "revised"]
+    gen_status: Literal["generating", "ready", "generation_failed"] = "ready"
+    gen_error: str | None = None
     idea_id: str | None
     created_at: datetime
     data: TaskDraftData
@@ -377,7 +409,9 @@ class PersonaOut(BaseModel):
 # --------------------------------------------------------------------------- #
 
 TaskStatus = Literal[
-    "draft",  # сгенерировано, валидация ещё не запускалась
+    "generating",  # задание генерируется в фоне
+    "generation_failed",  # генерация упала
+    "draft",  # сгенерировано/импортировано, валидация ещё не запускалась
     "validating",  # идёт прогон валидации
     "needs_review",  # прогон завершён, есть открытые находки/правки — ждёт решения человека
     "checked",  # прогон завершён, рубрика сошлась без правок

@@ -54,6 +54,9 @@ class TaskDraft(Base):
     root_id: Mapped[str] = mapped_column(String(32), index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     source: Mapped[str] = mapped_column(String(16), default="generated")
+    # generating | ready | generation_failed — для фоновой генерации из идеи
+    gen_status: Mapped[str] = mapped_column(String(20), default="ready")
+    gen_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     idea_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("course_ideas.id"), nullable=True)
     parent_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -119,12 +122,17 @@ async def init_models() -> None:
     await _ensure_database()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Лёгкая миграция для БД, созданных до расширения колонки (без Alembic).
+        # Лёгкие миграции для БД, созданных раньше (без Alembic).
         if engine.url.get_backend_name().startswith("postgresql"):
-            try:
-                await conn.execute(text("ALTER TABLE validation_runs ALTER COLUMN progress TYPE TEXT"))
-            except Exception:  # noqa: BLE001 — колонка уже TEXT или прав нет
-                pass
+            for stmt in (
+                "ALTER TABLE validation_runs ALTER COLUMN progress TYPE TEXT",
+                "ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS gen_status VARCHAR(20) DEFAULT 'ready'",
+                "ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS gen_error TEXT",
+            ):
+                try:
+                    await conn.execute(text(stmt))
+                except Exception:  # noqa: BLE001 — уже применено / нет прав
+                    pass
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

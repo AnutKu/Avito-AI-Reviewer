@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,9 @@ from app.schemas import (
     CourseIdeaIn,
     DecisionsIn,
     GenerateTaskIn,
+    GraderOutput,
+    GradeSolutionIn,
+    ImportTaskIn,
     PersonaOut,
     RunBrief,
     TaskDraftOut,
@@ -84,13 +87,32 @@ async def list_tasks(
 
 
 @router.post("/tasks/generate", response_model=TaskDraftOut, tags=["tasks"], status_code=201)
-async def generate_task(body: GenerateTaskIn, session: AsyncSession = Depends(get_session)) -> TaskDraftOut:
+async def generate_task(
+    body: GenerateTaskIn, response: Response, session: AsyncSession = Depends(get_session)
+) -> TaskDraftOut:
     if not body.idea_id and not body.idea:
         raise HTTPException(422, "нужен idea_id или idea")
+    if body.background:
+        if not body.idea:
+            raise HTTPException(422, "background=true поддерживает только новую идею")
+        row = await tasks.create_generating_task(session, body.idea)
+        tasks.launch_generation(row.id)
+        response.status_code = 202
+        return tasks.to_out(row)
     try:
         row = await tasks.generate_task(session, idea_id=body.idea_id, idea=body.idea)
     except tasks.NotFoundError as e:
         raise HTTPException(404, str(e)) from e
+    return tasks.to_out(row)
+
+
+@router.post("/tasks/import", response_model=TaskDraftOut, tags=["tasks"], status_code=201)
+async def import_task(body: ImportTaskIn, session: AsyncSession = Depends(get_session)) -> TaskDraftOut:
+    """Добавить готовое задание (не сгенерированное сервисом) для проверки агентами."""
+    try:
+        row = await tasks.import_task(session, body)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     return tasks.to_out(row)
 
 
@@ -132,11 +154,26 @@ async def list_task_runs(root_id: str, session: AsyncSession = Depends(get_sessi
 async def patch_task(
     task_id: str, patch: TaskPatchIn, session: AsyncSession = Depends(get_session)
 ) -> TaskDraftOut:
+    """Ручная правка на любом этапе: заголовок, условие, пункты сдачи, критерии,
+    скрытая рубрика — создаёт новую версию (source=edited)."""
     try:
         row = await tasks.patch_task(session, task_id, patch)
     except tasks.NotFoundError as e:
         raise HTTPException(404, str(e)) from e
     return tasks.to_out(row)
+
+
+@router.post("/tasks/{task_id}/grade", response_model=GraderOutput, tags=["tasks"])
+async def grade_solution(
+    task_id: str, body: GradeSolutionIn, session: AsyncSession = Depends(get_session)
+) -> GraderOutput:
+    """Демо-проверка: предварительное ревью одного решения по текущей рубрике."""
+    try:
+        return await tasks.grade_solution(session, task_id, body)
+    except tasks.NotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except tasks.ConflictError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get("/tasks/{task_id}/export", tags=["tasks"])

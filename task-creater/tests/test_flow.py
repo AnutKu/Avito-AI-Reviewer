@@ -152,3 +152,76 @@ async def test_validate_unknown_persona_fails_gracefully(client):
 async def test_decisions_for_unknown_run_is_404(client):
     r = await client.post("/validation-runs/deadbeef/decisions", json={"decisions": []})
     assert r.status_code == 404
+
+
+async def test_background_generation_shows_in_queue(client):
+    r = await client.post("/tasks/generate", json={"idea": IDEA, "background": True})
+    assert r.status_code == 202
+    tid = r.json()["id"]
+    assert r.json()["gen_status"] == "generating"
+    # сразу видно в списке со статусом generating
+    row = next(x for x in (await client.get("/tasks")).json() if x["id"] == tid)
+    assert row["status"] == "generating"
+    # фон дозаполняет — ждём ready
+    for _ in range(80):
+        t = (await client.get(f"/tasks/{tid}")).json()
+        if t["gen_status"] == "ready":
+            break
+        await asyncio.sleep(0.05)
+    assert t["gen_status"] == "ready" and len(t["data"]["criteria"]) >= 3
+    assert next(x for x in (await client.get("/tasks")).json() if x["id"] == tid)["status"] == "draft"
+
+
+async def test_import_task_and_grade_solution(client):
+    payload = {
+        "title": "Импортированное ДЗ по SQL",
+        "track": "Аналитика данных",
+        "statement_md": "Напишите запрос, считающий DAU по дням за последний месяц.",
+        "deliverables": ["SQL-запрос", "краткое пояснение логики"],
+        "public_rubric_note": "2 пункта × 0–5 баллов.",
+        "criteria": [
+            {
+                "key": "correctness",
+                "title": "Корректность запроса",
+                "max_points": 6,
+                "student_hint": "запрос считает то, что просили",
+                "description": "GROUP BY по дню, DISTINCT user_id, фильтр по дате за 30 дней.",
+                "check_kind": "objective",
+                "evidence_hint": "тело запроса",
+            },
+            {
+                "key": "clarity",
+                "title": "Пояснение",
+                "max_points": 4,
+                "student_hint": "логика описана словами",
+                "description": "есть текстовое пояснение, что и зачем.",
+                "check_kind": "subjective",
+                "evidence_hint": "текст под запросом",
+            },
+        ],
+        "total_points": 10,
+    }
+    r = await client.post("/tasks/import", json=payload)
+    assert r.status_code == 201, r.text
+    task = r.json()
+    assert task["source"] == "edited" and abs(task["total_points"] - 10) < 1e-6
+    assert task["data"]["criteria"][0]["key"] == "correctness"
+
+    # проверить решение агентом (демо-тестирование)
+    r = await client.post(
+        f"/tasks/{task['id']}/grade",
+        json={
+            "solution_md": "SELECT date, COUNT(DISTINCT user_id) FROM events GROUP BY date",
+            "persona": "demo",
+        },
+    )
+    assert r.status_code == 200, r.text
+    g = r.json()
+    assert g["persona"] == "demo"
+    assert {s["criterion_key"] for s in g["scores"]} == {"correctness", "clarity"}
+
+    # такую задачу тоже можно прогнать валидацией
+    run = await _wait_run(
+        client, (await client.post(f"/tasks/{task['id']}/validate", json={"max_rounds": 1})).json()["id"]
+    )
+    assert run["status"] == "succeeded"

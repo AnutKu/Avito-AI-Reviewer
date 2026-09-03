@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import traceback
 import uuid
 from datetime import UTC, datetime
 
@@ -12,7 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import roles
-from app.db import CourseIdea, EditDecision, TaskDraft, ValidationRun
+from app.agents.roles import _normalize_points
+from app.db import CourseIdea, EditDecision, SessionLocal, TaskDraft, ValidationRun
 from app.llm import LLMClient
 from app.pipeline import apply_edits
 from app.schemas import (
@@ -20,13 +23,20 @@ from app.schemas import (
     Criterion,
     CriterionEdit,
     DecisionsIn,
+    GraderOutput,
+    GradeSolutionIn,
+    ImportTaskIn,
     RunBrief,
+    SolverOutput,
     TaskDraftData,
     TaskDraftOut,
     TaskListItem,
     TaskPatchIn,
     ValidationResult,
 )
+
+log = logging.getLogger("taskcreater.tasks")
+_BG: set[asyncio.Task] = set()
 
 
 class NotFoundError(Exception):
@@ -45,6 +55,8 @@ def to_out(row: TaskDraft) -> TaskDraftOut:
         root_id=row.root_id,
         version=row.version,
         source=row.source,  # type: ignore[arg-type]
+        gen_status=getattr(row, "gen_status", "ready"),  # type: ignore[arg-type]
+        gen_error=getattr(row, "gen_error", None),
         idea_id=row.idea_id,
         created_at=created,
         data=data,
@@ -112,6 +124,131 @@ async def generate_task(
     return row
 
 
+# --- фоновая генерация: черновик виден сразу, наполняется агентом позже --------
+
+
+def _stub_task(idea: CourseIdeaIn) -> dict:
+    return TaskDraftData(
+        title=idea.idea[:70] + ("…" if len(idea.idea) > 70 else ""),
+        summary="Генерируется…",
+        statement_md="_Задание генерируется агентом. Обновите список через несколько секунд._",
+        criteria=[],
+        reference_solution_md="",
+        common_mistakes=[],
+    ).model_dump()
+
+
+async def create_generating_task(session: AsyncSession, idea: CourseIdeaIn) -> TaskDraft:
+    idea_row = await create_idea(session, idea)
+    new_id = uuid.uuid4().hex
+    row = TaskDraft(
+        id=new_id,
+        root_id=new_id,
+        source="generated",
+        version=1,
+        gen_status="generating",
+        idea_id=idea_row.id,
+        data=_stub_task(idea),
+        changelog=[],
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+def launch_generation(task_id: str) -> None:
+    t = asyncio.create_task(_run_generation(task_id))
+    _BG.add(t)
+    t.add_done_callback(_BG.discard)
+
+
+async def _run_generation(task_id: str) -> None:
+    async with SessionLocal() as s:
+        row = await s.get(TaskDraft, task_id)
+        if not row or not row.idea_id:
+            return
+        idea_obj = CourseIdeaIn(**(await s.get(CourseIdea, row.idea_id)).payload)
+    try:
+        data = await asyncio.to_thread(roles.generate_task, LLMClient(), idea_obj)
+        async with SessionLocal() as s:
+            row = await s.get(TaskDraft, task_id)
+            row.data = data.model_dump()
+            row.gen_status = "ready"
+            row.gen_error = None
+            await s.commit()
+    except Exception as exc:  # noqa: BLE001 — фон, ошибку кладём в запись
+        log.exception("генерация %s упала", task_id)
+        async with SessionLocal() as s:
+            row = await s.get(TaskDraft, task_id)
+            if row:
+                row.gen_status = "generation_failed"
+                row.gen_error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1500:]}"
+                await s.commit()
+
+
+# --- импорт готового задания --------------------------------------------------
+
+
+async def import_task(session: AsyncSession, payload: ImportTaskIn) -> TaskDraft:
+    if not payload.criteria:
+        raise ValueError("нужен хотя бы один критерий")
+    data = TaskDraftData(
+        title=payload.title,
+        summary=payload.statement_md[:200],
+        context_md=payload.context_md,
+        statement_md=payload.statement_md,
+        deliverables=payload.deliverables,
+        submission_format=payload.submission_format,
+        public_rubric_note=payload.public_rubric_note,
+        learning_objectives=payload.learning_objectives,
+        criteria=payload.criteria,
+        reference_solution_md=payload.reference_solution_md,
+        common_mistakes=payload.common_mistakes,
+        reviewer_notes=payload.reviewer_notes,
+    )
+    if payload.total_points:
+        data = _normalize_points(data, payload.total_points)
+
+    idea_row = await create_idea(
+        session,
+        CourseIdeaIn(idea=f"[импорт] {payload.title}", track=payload.track, task_format="open"),
+    )
+    new_id = uuid.uuid4().hex
+    row = TaskDraft(
+        id=new_id,
+        root_id=new_id,
+        source="edited",
+        version=1,
+        idea_id=idea_row.id,
+        data=data.model_dump(),
+        changelog=[{"kind": "import", "at": datetime.now(UTC).isoformat()}],
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+# --- демо-проверка: предварительное ревью одного решения --------------------
+
+
+async def grade_solution(session: AsyncSession, task_id: str, payload: GradeSolutionIn) -> GraderOutput:
+    task = await get_task(session, task_id)
+    if not task:
+        raise NotFoundError(f"черновик {task_id} не найден")
+    data = TaskDraftData(**task.data)
+    if not data.criteria:
+        raise ConflictError("у задания ещё нет критериев")
+    solution = SolverOutput(
+        persona=payload.persona or "provided",
+        approach_notes=payload.approach_notes or "(не указано)",
+        solution_md=payload.solution_md,
+        self_assessment=[],
+    )
+    return await asyncio.to_thread(roles.grade, LLMClient(), data, data.criteria, solution)
+
+
 async def get_task(session: AsyncSession, task_id: str) -> TaskDraft | None:
     return await session.get(TaskDraft, task_id)
 
@@ -160,6 +297,11 @@ def _run_brief(run: ValidationRun) -> RunBrief:
 
 
 def _derive_status(latest: TaskDraft, run: RunBrief | None) -> str:
+    gs = getattr(latest, "gen_status", "ready")
+    if gs == "generating":
+        return "generating"
+    if gs == "generation_failed":
+        return "generation_failed"
     if run is None:
         return "revised" if latest.source == "revised" else "draft"
     if run.status in ("pending", "running"):
