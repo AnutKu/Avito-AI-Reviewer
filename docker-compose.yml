@@ -16,6 +16,22 @@ services:
       timeout: 5s
       retries: 20
 
+  ai-reviewer:
+    build: ./ai-reviewer
+    container_name: avito-ai-reviewer
+    environment:
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_MODEL: ${ZAI_MODEL:-glm-5.3-flash}
+      ZAI_REASONING_EFFORT: ${ZAI_REASONING_EFFORT:-low}
+      ZAI_TIMEOUT_SECONDS: ${ZAI_TIMEOUT_SECONDS:-120}
+    ports:
+      - "${AI_REVIEWER_PORT:-8010}:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build: ./api
     container_name: avito-ai-api
@@ -23,6 +39,9 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-avito}:${POSTGRES_PASSWORD:-avito}@postgres:5432/${POSTGRES_DB:-avito_ai_reviewer}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       SEED_ON_START: ${SEED_ON_START:-true}
+      AI_REVIEWER_URL: http://ai-reviewer:8010
+      AI_REVIEWER_MODEL: ${ZAI_MODEL:-glm-5.3-flash}
+      AI_REVIEWER_TIMEOUT_SECONDS: ${AI_REVIEWER_TIMEOUT_SECONDS:-150}
       FEATURE_DISTRIBUTION: ${FEATURE_DISTRIBUTION:-true}
       FEATURE_RUBRIC_BUILDER: ${FEATURE_RUBRIC_BUILDER:-true}
       FEATURE_ANALYTICS: ${FEATURE_ANALYTICS:-true}
@@ -33,6 +52,8 @@ services:
       - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      ai-reviewer:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

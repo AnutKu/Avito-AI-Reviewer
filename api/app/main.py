@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Avito AI Reviewer Core API",
     version="0.1.0",
-    description="Core domain and mocked feature contracts for the unified cabinet.",
+    description="Core domain integrated with the isolated AI reviewer service.",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -42,4 +42,9 @@ app.include_router(methodist.router, prefix="/api")
 
 @app.get("/health", tags=["system"])
 def health() -> dict:
-    return {"status": "ok", "service": "core-api", "mock_mode": True}
+    return {
+        "status": "ok",
+        "service": "core-api",
+        "ai_reviewer_url": settings.ai_reviewer_url,
+        "ai_model": settings.ai_reviewer_model,
+    }

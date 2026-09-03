@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,6 +29,12 @@ from ..security import require
 from ..serializers import iso, review_data, submission_data
 from ..services.mock_review import blitz_questions
 from ..services.status import overdue_risk, transition
+from ..services.ai_reviewer_client import (
+    AiReviewerClient,
+    AiReviewerError,
+    AiReviewerUnavailable,
+)
+from ..services.review_pipeline import persist_call, run_review
 
 router = APIRouter(prefix="/reviewer", tags=["reviewer"])
 reviewer_guard = require(Role.REVIEWER)
@@ -230,12 +236,62 @@ def rewrite_feedback(
     review = db.get(Review, review_id)
     if not review:
         raise HTTPException(404, "Ревью не найдено")
-    review_context(db, review.submission_id, user)
+    submission, review = review_context(db, review.submission_id, user)
+    decisions = [
+        {
+            "criterion": item.criterion_title,
+            "score": item.final_score if item.final_score is not None else item.ai_score,
+            "max_score": item.max_score,
+            "action": item.reviewer_action,
+            "comment": item.reviewer_comment or item.recommendation,
+        }
+        for item in review.items
+        if item.reviewer_action != ReviewerAction.REJECTED
+    ]
+    try:
+        response = AiReviewerClient().rewrite_feedback(
+            text=payload.text,
+            tone_of_voice=submission.assignment.course.tone_of_voice,
+            decisions=decisions,
+        )
+        suggestion = response.suggestion
+        metadata = response.metadata
+    except AiReviewerUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except AiReviewerError as exc:
+        raise HTTPException(502, f"AI reviewer не смог переформулировать feedback: {exc}") from exc
+    persist_call(db, review.id, "feedback_copilot", metadata)
+    db.commit()
     return {
         "original": payload.text,
-        "suggestion": f"Сильная сторона работы — последовательный ход экспериментов. {payload.text.strip()} Рекомендую учесть замечания перед следующей работой.",
-        "mock": True,
+        "suggestion": suggestion,
+        "provider": "z.ai",
+        "model": metadata.model,
     }
+
+
+@router.post("/reviews/{review_id}/rerun", status_code=202)
+def rerun_review(
+    review_id: UUID,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(reviewer_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    review = db.get(Review, review_id)
+    if not review:
+        raise HTTPException(404, "Ревью не найдено")
+    submission, review = review_context(db, review.submission_id, user)
+    if submission.status == SubmissionStatus.COMPLETED:
+        raise HTTPException(409, "Завершённое ревью нельзя перезапустить")
+    if any(item.reviewer_action != ReviewerAction.PENDING for item in review.items):
+        raise HTTPException(409, "Ревью с решениями человека нельзя перезапустить")
+    if review.ai_status == "running":
+        raise HTTPException(409, "AI-ревью уже выполняется")
+    review.ai_status = "pending"
+    review.ai_error = None
+    db.commit()
+    background_tasks.add_task(run_review, review.id)
+    return {"review_id": str(review.id), "ai_status": review.ai_status}
 
 
 @router.post("/reviews/{review_id}/complete")

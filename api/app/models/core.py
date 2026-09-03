@@ -156,7 +156,7 @@ class Review(Base):
         ForeignKey("submissions.id", ondelete="CASCADE"), unique=True
     )
     rubric_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rubric_versions.id"))
-    model: Mapped[str] = mapped_column(String(64), default="mock")
+    model: Mapped[str] = mapped_column(String(64), default="pending")
     ai_status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     ai_error: Mapped[str | None] = mapped_column(Text)
     raw_result: Mapped[dict] = mapped_column(JSONB, default=dict)

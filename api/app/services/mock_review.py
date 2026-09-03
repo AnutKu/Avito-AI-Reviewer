@@ -1,8 +1,4 @@
-"""Deterministic replacement for the future AI review pipeline.
-
-The UI and API use the same persisted entities that a real worker will fill later.
-Replacing this module must not require changing the HTTP contracts.
-"""
+"""Deterministic demo fixtures and the still-mocked blitz question generator."""
 
 from sqlalchemy.orm import Session
 
@@ -78,11 +74,11 @@ MOCK_ITEMS = [
 ]
 
 
-def fill_mock_review(db: Session, review: Review, quality: float = 1.0) -> Review:
-    """Persist a ready mock response. ``quality`` creates varied demo records."""
+def fill_demo_review(db: Session, review: Review, quality: float = 1.0) -> Review:
+    """Persist a labelled fixture. New submissions use the real Z.AI integration."""
 
     review.ai_status = AiStatus.READY
-    review.model = "mock/ai-review-v1"
+    review.model = "demo-fixture/v1"
     review.draft_feedback = (
         "Хорошая работа: эксперименты последовательно залогированы, а результат можно "
         "воспроизвести. Перед финальной сдачей зарегистрируйте лучшую модель в Model "
@@ -91,7 +87,7 @@ def fill_mock_review(db: Session, review: Review, quality: float = 1.0) -> Revie
     review.raw_result = {
         "summary": "Основная часть выполнена, два критерия требуют внимания ревьюера.",
         "pipeline": ["extract", "grade", "signal", "feedback"],
-        "mock": True,
+        "demo_data": True,
     }
     for position, item in enumerate(MOCK_ITEMS):
         score = round(min(item["max_score"], item["score"] * quality), 1)
