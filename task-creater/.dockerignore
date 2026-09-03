@@ -1,0 +1,14 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+*.db
+.env
+tests
+uv.lock
+.git
+probe-out/
+out/
+nohup.out
+*.log

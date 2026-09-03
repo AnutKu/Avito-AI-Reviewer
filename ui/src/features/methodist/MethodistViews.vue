@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
 import DemoBadge from '../../shared/ui/DemoBadge.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
+import TaskCreaterView from './TaskCreaterView.vue'
 
 const props = defineProps({ active: String })
 const dashboard = ref(null)
@@ -86,6 +87,8 @@ onMounted(load)
     <div class="page-heading"><div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Задания и критерии</h1><p>Опубликованные рубрики неизменяемы — каждая правка создаёт новую версию</p></div><span class="mock-chip">✦ AI-конструктор · mock</span></div>
     <article v-for="item in assignments" :key="item.id" class="card rubric-card"><div class="rubric-head"><div><small>{{ item.course }}</small><h2>{{ item.title }}</h2><p>{{ item.statement }}</p></div><div class="version-pill">Версия {{ item.rubric_version }}</div></div><div class="rubric-summary"><span><b>{{ item.max_score }}</b><small>макс. балл</small></span><span><b>{{ item.rubric.length }}</b><small>критериев</small></span><span><b>3</b><small>golden set</small></span></div><div class="criteria-table"><div v-for="(criterion, index) in item.rubric" :key="criterion.key"><span>{{ index + 1 }}</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></div><div class="rubric-actions"><p>Последнее изменение: {{ item.rubric_note }}</p><button class="secondary">Посмотреть golden set</button><button class="primary" @click="publishRubric(item)">Опубликовать новую версию</button></div></article>
   </section>
+
+  <TaskCreaterView v-else-if="active === 'methodist-taskcreater'" />
 
   <section v-else-if="active === 'methodist-analytics' && analytics">
     <div class="page-heading"><div><span class="eyebrow">КАЧЕСТВО ПРОВЕРКИ</span><h1>Аналитика</h1><p>Где AI и ревьюеры расходятся и как меняется скорость проверки</p></div><DemoBadge /></div>

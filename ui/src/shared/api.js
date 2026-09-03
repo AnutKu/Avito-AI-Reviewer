@@ -22,6 +22,20 @@ export async function api(path, options = {}) {
   return response.json()
 }
 
+// AI-помощник лектора (services/task-creater). Отдельный сервис без авторизации,
+// проксируется единым кабинетом на /task-creater/.
+export async function taskCreater(path, options = {}) {
+  const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers }
+  const response = await fetch(`/task-creater${path}`, { ...options, headers })
+  const isJson = (response.headers.get('content-type') || '').includes('json')
+  if (!response.ok) {
+    const data = isJson ? await response.json().catch(() => ({})) : {}
+    throw new Error(data.detail || `Ошибка ${response.status}`)
+  }
+  if (response.status === 204) return null
+  return isJson ? response.json() : response.text()
+}
+
 export function formatDate(value, withTime = false) {
   if (!value) return '—'
   return new Intl.DateTimeFormat('ru-RU', {
