@@ -3,7 +3,7 @@
 
 Запуск против поднятого сервиса:
     uv run python scripts/demo.py
-    BASE_URL=http://127.0.0.1:8000 uv run python scripts/demo.py
+    BASE_URL=http://127.0.0.1:8082 uv run python scripts/demo.py
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import time
 
 import httpx
 
-BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:8000")
+BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:8082")
 
 IDEA = {
     "idea": (

@@ -6,9 +6,9 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/health': 'http://localhost:8000',
-      '/task-creater': { target: 'http://localhost:8100', rewrite: p => p.replace(/^\/task-creater/, '') },
+      '/api': 'http://localhost:8081',
+      '/health': 'http://localhost:8081',
+      '/task-creater': { target: 'http://localhost:8082', rewrite: p => p.replace(/^\/task-creater/, '') },
     },
   },
 })

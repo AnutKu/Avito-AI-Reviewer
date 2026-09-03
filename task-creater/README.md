@@ -126,21 +126,22 @@
 
 ## Запуск
 
-### Вариант 1. docker-compose (сервис + Postgres)
+Сервис — часть монорепо. Docker и конфиг — из **корня** репозитория (единый
+`docker-compose.yml`, единый `.env`).
+
+### Вариант 1. В составе стека (из корня репо)
 
 ```bash
-cp .env.example .env          # заполнить LLM-доступ (или оставить fake)
-make up                       # docker compose up --build -d
-# → http://localhost:8000/docs
+cp .env.example .env          # LLM-доступ для task-creater — там же (или оставить fake)
+docker compose up --build     # postgres + api + ui + taskcreater
+# кабинет: http://localhost:8080  (методист → «AI-конструктор ДЗ»)
+# Swagger: http://localhost:8080/task-creater/docs
 ```
 
-Без ключей LLM — оффлайн-режим (детерминированные ответы, для демо архитектуры):
+Только этот сервис (+ общий postgres): `docker compose up --build taskcreater`
+из корня, либо `make up` из этого каталога (обёртка над корневым compose).
 
-```bash
-make up-fake                  # TASKCREATER_LLM_FAKE=1
-```
-
-### Вариант 2. Локально (SQLite, оффлайн-LLM)
+### Вариант 2. Локально без докера (SQLite, оффлайн-LLM)
 
 ```bash
 make install                  # uv sync --extra dev
@@ -150,7 +151,7 @@ make dev                      # uvicorn --reload, fake LLM, sqlite
 ### Сквозной сценарий
 
 ```bash
-make demo                     # scripts/demo.py против localhost:8000
+make demo                     # scripts/demo.py против http://127.0.0.1:8082
 ```
 
 Проходит весь путь: идея → задание → валидация → находки → правки → решение

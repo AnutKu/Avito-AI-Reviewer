@@ -8,16 +8,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Единый .env — в корне репозитория; локальный (если создан) переопределяет.
+        # В контейнере обоих файлов нет, конфиг приходит из docker-compose environment.
+        env_file=("../.env", ".env"),
         env_file_encoding="utf-8",
         env_prefix="TASKCREATER_",
         extra="ignore",
     )
 
     # --- Хранилище -----------------------------------------------------------
-    # По умолчанию — Postgres из docker-compose. Для тестов подменяется на
-    # sqlite+aiosqlite:///:memory: через переменную окружения.
-    database_url: str = "postgresql+asyncpg://taskcreater:taskcreater@db:5432/taskcreater"
+    # В интегрированном стеке — общий контейнер postgres, своя база `taskcreater`
+    # (см. docker-compose.yml в корне). Для тестов подменяется на sqlite.
+    database_url: str = "postgresql+asyncpg://avito:avito@postgres:5432/taskcreater"
 
     # --- LLM-шлюз ----------------------------------------------------------
     # Провайдер-агностик через litellm. Задайте llm_api_base + llm_api_key для

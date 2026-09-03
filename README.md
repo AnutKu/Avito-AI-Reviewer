@@ -11,16 +11,17 @@ docker compose up --build
 
 После запуска:
 
-- кабинет: <http://localhost:3000> (методист → «AI-конструктор ДЗ»);
-- OpenAPI: <http://localhost:8000/docs>;
-- healthcheck: <http://localhost:8000/health>;
-- AI-помощник лектора: экран в кабинете + OpenAPI на <http://localhost:3000/task-creater/docs>
-  (единый кабинет проксирует его на `/task-creater/`; прямой порт — `:8100`).
+- кабинет: <http://localhost:8080> (методист → «AI-конструктор ДЗ»);
+- OpenAPI: <http://localhost:8081/docs>;
+- healthcheck: <http://localhost:8081/health>;
+- AI-помощник лектора: экран в кабинете + OpenAPI на <http://localhost:8080/task-creater/docs>
+  (единый кабинет проксирует его на `/task-creater/`; прямой порт — `:8082`).
 
-Если порт занят, его можно переопределить без изменения файлов:
+Порты (кабинет 8080, core API 8081, task-creater 8082, postgres 55432) можно
+переопределить без изменения файлов:
 
 ```bash
-UI_PORT=3001 docker compose up --build
+UI_PORT=9080 docker compose up --build
 ```
 
 Поднять только AI-помощник лектора:
@@ -36,7 +37,7 @@ docker compose up --build taskcreater
 По умолчанию `taskcreater` работает в fake-режиме (детерминированные ответы, без
 вызовов LLM) — как и остальные AI-модули этого этапа. Для реальных прогонов задайте
 `TASKCREATER_LLM_FAKE=0` и креды шлюза в `.env` (см. `.env.example`). Детали,
-сквозной сценарий и проверялка эндпоинтов — в [services/task-creater/README.md](services/task-creater/README.md).
+сквозной сценарий и проверялка эндпоинтов — в [task-creater/README.md](task-creater/README.md).
 
 На стартовом экране есть демо-вход для каждой роли. База заполняется учебным курсом, рубрикой, работами в разных статусах, ревью, сигналами и уведомлениями. Данные создаются только в пустой БД.
 
@@ -56,11 +57,11 @@ docker compose up --build taskcreater
 ## Структура
 
 ```text
-api/                    FastAPI, core-домен, PostgreSQL, mock feature contracts
-ui/                     Vue 3, ролевые feature-модули, nginx
-services/task-creater/  AI-помощник лектора: идея → ДЗ с критериями + валидация
-                        критериев мультиагентным графом (LangGraph); отдельная
-                        база `taskcreater` в общем сервере postgres
+api/           FastAPI, core-домен, PostgreSQL, mock feature contracts
+ui/            Vue 3, ролевые feature-модули, nginx
+task-creater/  AI-помощник лектора: идея → ДЗ с критериями + мультиагентная
+               валидация критериев (LangGraph); отдельная база `taskcreater`
+               в общем сервере postgres
 ```
 
 AI worker, LLM gateway и Telegram не входят в этот этап. Их места зафиксированы контрактами и фиче-флагами; интерфейс явно помечает мок-модули и агрегаты на фикстурах.

@@ -5,7 +5,7 @@
 
     python3 scripts/probe.py
     python3 scripts/probe.py --idea "..." --track "Backend / Go" --rounds 2
-    BASE_URL=http://localhost:8000 python3 scripts/probe.py --full --save ./probe-out
+    BASE_URL=http://127.0.0.1:8082 python3 scripts/probe.py --full --save ./probe-out
 
 Что смотреть, чтобы судить о качестве:
   • раздел 1 — сгенерированные критерии: проверяемые ли, не субъективные ли, суммируются ли в разбалловку;
@@ -94,7 +94,7 @@ def call(method: str, path: str, body: dict | None = None, *, retries: int = 3):
                 time.sleep(1.0)
     print(red(f"! не достучался до {url}: {last_err}"))
     print(dim("  • сервис поднят?           make up  /  make dev"))
-    print(dim("  • другой адрес/порт?       --base-url http://127.0.0.1:8000"))
+    print(dim("  • другой адрес/порт?       --base-url http://127.0.0.1:8082"))
     print(dim("  • контейнер перезапущен?   подождите healthcheck и повторите"))
     sys.exit(1)
 
@@ -432,7 +432,7 @@ def section_versions(task: dict) -> None:
 def main() -> None:
     global ARGS
     ap = argparse.ArgumentParser(description="probe task-creater API: вход → выход по основным эндпоинтам")
-    ap.add_argument("--base-url", default=os.environ.get("BASE_URL", "http://127.0.0.1:8000"))
+    ap.add_argument("--base-url", default=os.environ.get("BASE_URL", "http://127.0.0.1:8082"))
     ap.add_argument("--idea", default=DEFAULT_IDEA, help="идея задания своими словами")
     ap.add_argument("--track", default="Backend / Go", help="направление курса")
     ap.add_argument(

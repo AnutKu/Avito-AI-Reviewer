@@ -105,9 +105,7 @@ async def _ensure_database() -> None:
     admin_engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         async with admin_engine.connect() as conn:
-            exists = await conn.scalar(
-                text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": dbname}
-            )
+            exists = await conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": dbname})
             if not exists:
                 await conn.execute(text(f'CREATE DATABASE "{dbname}"'))
                 log.info("создана БД %s на общем сервере postgres", dbname)
