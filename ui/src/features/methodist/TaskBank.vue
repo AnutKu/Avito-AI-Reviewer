@@ -273,13 +273,25 @@ function setBlock(field, value) {
   else draft.value.authoring[field] = value
 }
 
+// Контекст берём из редактора, а не с сервера: помощник должен видеть то, что
+// методист набрал прямо сейчас, включая несохранённое. Поэтому же ручка не
+// привязана к заданию — она работает и на ещё не созданном черновике.
+function aiContext(exclude) {
+  const d = draft.value
+  const all = { title: d.title, statement: d.statement, ...d.authoring }
+  return Object.fromEntries(
+    Object.entries(all).filter(([key, value]) => key !== exclude && typeof value === 'string' && value.trim()))
+}
+
 async function askAi(field) {
   const current = blockValue(field)
   aiBusy.value = field
   try {
-    const out = await api(`/methodist/assignments/${draft.value.id || 'new'}/ai-fill`, {
+    const out = await api('/methodist/ai-fill', {
       method: 'POST',
-      body: JSON.stringify({ field, mode: current.trim() ? 'improve' : 'fill', current, instruction: '' }),
+      body: JSON.stringify({
+        field, mode: current.trim() ? 'improve' : 'fill', current, instruction: '', context: aiContext(field),
+      }),
     })
     preview.value = { field, current, proposed: out.proposed, note: out.note, editing: false }
   } catch (e) { error.value = e.message } finally { aiBusy.value = '' }
