@@ -11,6 +11,8 @@ const loading = ref(true)
 const error = ref('')
 const assignments = ref([])
 const submittedCount = computed(() => assignments.value.filter(a => a.submission).length)
+// Доля для кольца. Без заданий делить не на что — кольцо остаётся пустым, а не NaN.
+const submittedRatio = computed(() => (assignments.value.length ? submittedCount.value / assignments.value.length : 0))
 const detail = ref(null)
 const result = ref(null)
 const blitz = ref([])
@@ -135,7 +137,7 @@ onUnmounted(() => {
 <template>
   <section v-if="active === 'student-assignments'">
     <template v-if="mode === 'list'">
-      <div class="page-heading"><div><h1>Мои задания</h1></div><div class="progress-ring"><b>{{ submittedCount }}/{{ assignments.length }}</b><small>сдано</small></div></div>
+      <div class="page-heading"><div><h1>Мои задания</h1></div><div class="progress-ring" :style="{ '--done': submittedRatio }" :title="`Сдано ${submittedCount} из ${assignments.length}`"><b>{{ submittedCount }}/{{ assignments.length }}</b><small>сдано</small></div></div>
       <div v-if="loading" class="skeleton-list"><i v-for="x in 3" :key="x" /></div>
       <div v-else class="assignment-list">
         <button v-for="item in assignments" :key="item.id" class="assignment-row" @click="openAssignment(item)">

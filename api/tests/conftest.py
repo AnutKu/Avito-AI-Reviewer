@@ -1,11 +1,17 @@
 """Общие фикстуры тестов.
 
 Юнит-тесты балансировщика (`test_distribution.py`) БД не требуют.
-Интеграционные тесты роутера методиста включаются только когда задан
-`TEST_DATABASE_URL` — иначе они помечаются skipped. Пример:
+Интеграционные тесты включаются только когда задан `TEST_DATABASE_URL` —
+иначе они помечаются skipped. Пример:
 
-    TEST_DATABASE_URL=postgresql+psycopg://avito:avito@localhost:55432/avito_ai_reviewer \
+    TEST_DATABASE_URL=postgresql+psycopg://avito:avito@localhost:55432/avito_ai_reviewer_test \
         python -m pytest
+
+**База должна быть отдельной.** Фикстура `client` делает `drop_all` — она
+сносит всё, на что указывает URL. Раньше в примере стояло имя рабочей базы
+кабинета, и прогон тестов молча стирал опубликованные задания вместе со всей
+демо-базой. Поэтому имя базы обязано заканчиваться на `_test`; обойти это
+можно только осознанно, переменной `ALLOW_DESTRUCTIVE_TESTS=1`.
 """
 
 import hashlib
@@ -14,7 +20,21 @@ import os
 import pytest
 
 _TEST_DB = os.environ.get("TEST_DATABASE_URL")
+
+
+def _database_name(url: str) -> str:
+    return url.rsplit("/", 1)[-1].split("?")[0]
+
+
 if _TEST_DB:
+    _name = _database_name(_TEST_DB)
+    if not _name.endswith("_test") and os.environ.get("ALLOW_DESTRUCTIVE_TESTS") != "1":
+        raise RuntimeError(
+            f"TEST_DATABASE_URL указывает на базу «{_name}», а тесты её сотрут: "
+            "фикстура client делает drop_all. Заведите отдельную базу "
+            f"«{_name}_test» (CREATE DATABASE {_name}_test OWNER avito) или, если вы "
+            "точно понимаете последствия, задайте ALLOW_DESTRUCTIVE_TESTS=1."
+        )
     # db.py читает DATABASE_URL при импорте — задаём до импорта приложения.
     os.environ["DATABASE_URL"] = _TEST_DB
     os.environ.setdefault("SEED_ON_START", "false")

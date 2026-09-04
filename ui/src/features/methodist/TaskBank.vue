@@ -867,14 +867,13 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
    обычных карточек — поэтому форма одевается здесь, а не наследует ничего. */
 .tb-form label { display: block; margin-bottom: 12px; font-size: var(--fs-sm); font-weight: 600; }
 .tb-form input, .tb-form select, .tb-form textarea { display: block; width: 100%; margin-top: 6px;
-  padding: 10px 12px; font: inherit; font-weight: 400; color: var(--ink);
+  padding: 10px 12px; font: inherit; font-size: var(--fs-sm); font-weight: 400; color: var(--ink);
   border: 1px solid #dcdde3; border-radius: 10px; background: #fff; }
 .tb-form textarea { resize: vertical; }
 .tb-form input:focus, .tb-form select:focus, .tb-form textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px #e7f4fe; }
 .tb-form .af-crit input { margin-top: 0; }
 .tb-block-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.tb-area { display: block; width: 100%; margin-top: 8px; padding: 11px 12px; font: inherit; font-size: var(--fs-sm);
-  border: 1px solid #dcdde3; border-radius: 10px; resize: vertical; }
+.tb-area { margin-top: 8px; padding: 11px 12px; }
 .tb-status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .tb-dirty { color: #9a6810; font-size: var(--fs-xs); }
 .tb-wide { width: 100%; }
