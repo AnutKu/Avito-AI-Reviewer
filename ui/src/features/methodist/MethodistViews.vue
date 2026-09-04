@@ -7,7 +7,6 @@ import TaskBank from './TaskBank.vue'
 const props = defineProps({ active: String, sub: { type: Array, default: () => [] } })
 defineEmits(['navigate'])
 const report = ref(null)            // объединённый дашборд: обзор + качество проверки
-const dashTab = ref('overview')
 const showAllCriteria = ref(false)
 const performance = ref(null)       // журнал «студент × задание»
 const perfTab = ref('journal')      // journal | registry (бывший «Реестр работ»)
@@ -29,7 +28,6 @@ async function load(active = props.active) {
   try {
     if (active === 'methodist-dashboard') {
       report.value = await api('/methodist/analytics')
-      if (!report.value.quality) dashTab.value = 'overview'   // вкладка выключена фиче-флагом
     }
     if (active === 'methodist-performance') {
       ;[performance.value, registry.value] = await Promise.all([
@@ -240,11 +238,9 @@ onMounted(load)
   <section v-if="active === 'methodist-dashboard' && report">
     <div class="page-heading">
       <div><h1>Аналитика курса</h1></div>
-      <div class="dash-tabs"><button :class="{ active: dashTab === 'overview' }" @click="dashTab = 'overview'">Обзор</button><button v-if="report.quality" :class="{ active: dashTab === 'quality' }" @click="dashTab = 'quality'">Качество проверки</button></div>
     </div>
 
-    <template v-if="dashTab === 'overview'">
-      <div class="metric-grid">
+    <div class="metric-grid">
         <article><span class="metric-icon blue">▦</span><div><small>Сдано работ</small><b>{{ ov.submitted }}</b><em>{{ pct(ov.submission_rate) }} от ожидаемых · всего {{ ov.expected }}</em></div></article>
         <article><span class="metric-icon green">✓</span><div><small>Проверено</small><b>{{ ov.completed }}</b><em :class="{ positive: completedTrend.good }">{{ completedTrend.text }}</em></div></article>
         <article><span class="metric-icon red">!</span><div><small>Просрочено</small><b>{{ ov.overdue }}</b><em>{{ ov.overdue ? 'сданы после дедлайна' : 'дедлайны соблюдены' }}</em></div></article>
@@ -270,10 +266,10 @@ onMounted(load)
           <div v-for="person in report.reviewers" :key="person.id" class="reviewer-load"><span class="avatar purple">{{ initials(person.name) }}</span><div><b>{{ person.name }}</b><span><i :style="`width:${Math.min(100, person.load / person.capacity * 100)}%`" /></span></div><em>{{ person.load }} / {{ person.capacity }}</em></div>
           <div class="insight"><span>▲</span><p><b>Что видно по данным</b>{{ loadHint }}</p></div>
         </article>
-      </div>
-    </template>
+    </div>
 
-    <template v-else-if="report.quality">
+    <template v-if="report.quality">
+      <h2 class="dist-subhead">Качество проверки</h2>
       <div class="analytics-grid">
         <article class="card">
           <div class="card-title"><div><h2>Согласие AI и ревьюера</h2><p>Доля критериев, принятых без правки</p></div><strong class="large-positive">{{ pct(report.quality.agreement.rate) }}</strong></div>
@@ -416,12 +412,14 @@ onMounted(load)
 
     <template v-if="assignedRows.length">
       <h2 class="dist-subhead">Распределены — можно передать другому · {{ assignedRows.length }}</h2>
-      <div class="table-card distribution-table">
-        <div class="table-row table-head"><span>Работа</span><span>Ревьюер</span><span>Назначено</span><span /></div>
+      <div class="table-card distribution-table assigned-table">
+        <div class="table-row table-head"><span>Работа</span><span>Ревьюер</span><span /></div>
         <div v-for="row in assignedRows" :key="row.submission.id" class="table-row">
           <span class="student-cell"><i>{{ initials(row.submission.student) }}</i><span><b>{{ row.submission.student }}</b><small>{{ row.submission.assignment }}</small></span></span>
-          <span><select v-model="row.chosen" class="rev-picker"><option v-for="p in reviewerLoads" :key="p.id" :value="p.id" :disabled="!p.available">{{ p.name }} · {{ p.load }}/{{ p.capacity }}{{ p.available ? '' : ' · недоступен' }}</option></select></span>
-          <span class="reason">{{ row.status === 'in_review' ? 'на проверке — передача перезапустит ревью' : row.explanation }}</span>
+          <span>
+            <select v-model="row.chosen" class="rev-picker"><option v-for="p in reviewerLoads" :key="p.id" :value="p.id" :disabled="!p.available">{{ p.name }} · {{ p.load }}/{{ p.capacity }}{{ p.available ? '' : ' · недоступен' }}</option></select>
+            <small v-if="row.status === 'in_review'" class="warn">на проверке — передача перезапустит ревью</small>
+          </span>
           <button class="text-button" :disabled="row.chosen === row.reviewer.id" @click="reassignAssigned(row)">передать</button>
         </div>
       </div>

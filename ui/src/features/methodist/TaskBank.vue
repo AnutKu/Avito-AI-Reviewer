@@ -850,22 +850,22 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 <style scoped>
 .tb-tabbar { margin-top: -6px; }
 .tb-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.tb-crumbs { color: var(--muted); font-size: 11px; margin: 0 0 4px; }
-.tb-crumbs .text-button { font-size: 11px; }
+.tb-crumbs { color: var(--muted); font-size: var(--fs-xs); margin: 0 0 4px; }
+.tb-crumbs .text-button { font-size: var(--fs-xs); }
 
 .tb-table .table-row { grid-template-columns: minmax(220px, 2fr) .7fr .8fr 1.1fr 150px; }
 .tb-open { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; font: inherit; }
-.tb-open b { display: block; font-size: 12px; }
-.tb-open small { display: block; color: var(--muted); font-size: 9px; margin-top: 4px; }
+.tb-open b { display: block; font-size: var(--fs-sm); }
+.tb-open small { display: block; color: var(--muted); font-size: var(--fs-2xs); margin-top: 4px; }
 .tb-runcell b.ok { color: #087448; } .tb-runcell b.bad { color: var(--red); } .tb-runcell b.wait { color: #7c3aed; }
 .tb-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
 .tb-side > .card { margin-bottom: 12px; position: relative; }
 .tb-side > .card:first-child { position: sticky; top: 95px; }
-.tb-block-title { font-size: 14px; margin: 0 0 10px; }
+.tb-block-title { font-size: var(--fs-md); margin: 0 0 10px; }
 /* Кабинет стилизует поля только внутри .form-card, а редактор задания собран из
    обычных карточек — поэтому форма одевается здесь, а не наследует ничего. */
-.tb-form label { display: block; margin-bottom: 12px; font-size: 12px; font-weight: 600; }
+.tb-form label { display: block; margin-bottom: 12px; font-size: var(--fs-sm); font-weight: 600; }
 .tb-form input, .tb-form select, .tb-form textarea { display: block; width: 100%; margin-top: 6px;
   padding: 10px 12px; font: inherit; font-weight: 400; color: var(--ink);
   border: 1px solid #dcdde3; border-radius: 10px; background: #fff; }
@@ -873,42 +873,42 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-form input:focus, .tb-form select:focus, .tb-form textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px #e7f4fe; }
 .tb-form .af-crit input { margin-top: 0; }
 .tb-block-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.tb-area { display: block; width: 100%; margin-top: 8px; padding: 11px 12px; font: inherit; font-size: 13px;
+.tb-area { display: block; width: 100%; margin-top: 8px; padding: 11px 12px; font: inherit; font-size: var(--fs-sm);
   border: 1px solid #dcdde3; border-radius: 10px; resize: vertical; }
 .tb-status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.tb-dirty { color: #9a6810; font-size: 10px; }
+.tb-dirty { color: #9a6810; font-size: var(--fs-xs); }
 .tb-wide { width: 100%; }
-.tb-side-note { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 10px; }
+.tb-side-note { color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; margin-top: 10px; }
 .tb-side-note .tb-spinner { display: inline-block; vertical-align: -3px; width: 12px; height: 12px; margin-right: 6px; }
-.tb-total { color: var(--muted); font-size: 11px; } .tb-total.bad { color: #9a6810; }
-.tb-warn { color: #9a6810; background: #fff8ec; border-radius: 8px; padding: 8px 10px; font-size: 11px; margin: 8px 0; }
+.tb-total { color: var(--muted); font-size: var(--fs-xs); } .tb-total.bad { color: #9a6810; }
+.tb-warn { color: #9a6810; background: #fff8ec; border-radius: 8px; padding: 8px 10px; font-size: var(--fs-xs); margin: 8px 0; }
 /* Критерий — карточка, а не строка таблицы: название и описание должны читаться
    целиком, иначе методист правит вслепую, а ревьюер получает обрезанный смысл. */
 .tb-crit { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #fcfcff; }
 .tb-crit-head { display: flex; align-items: center; gap: 10px; }
 .tb-crit-no { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 7px;
-  background: #eaf5fe; color: var(--blue); font-size: 11px; font-weight: 700; }
+  background: #eaf5fe; color: var(--blue); font-size: var(--fs-xs); font-weight: 700; }
 .tb-crit-title { flex: 1; font-weight: 600; }
-.tb-crit-points { display: flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.tb-crit-points { display: flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; font-size: var(--fs-xs); color: var(--muted); }
 .tb-crit-points input { width: 76px; margin: 0; }
 .tb-crit-field { display: block; margin-top: 12px; }
 .tb-crit-hidden { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px;
   padding-top: 12px; border-top: 1px dashed #dcdde3; }
 .tb-crit-hidden .tb-crit-field { margin-top: 0; }
-.tb-crit-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
-.tb-crit-empty { display: block; color: #9a6810; font-size: 11px; font-weight: 400; margin: 6px 0 0; line-height: 1.5; }
+.tb-crit-label { display: block; font-size: var(--fs-sm); font-weight: 600; margin-bottom: 6px; }
+.tb-crit-empty { display: block; color: #9a6810; font-size: var(--fs-xs); font-weight: 400; margin: 6px 0 0; line-height: 1.5; }
 /* Уровень — строка «баллы · метка · признак»: порог правится там же, где текст,
    иначе шкалу приходится держать в голове. */
 .tb-level { display: grid; grid-template-columns: 74px 1fr 1.6fr 24px; gap: 6px; align-items: center; margin-bottom: 6px; }
-.tb-level input { margin-top: 0; padding: 8px 10px; font-size: 12px; }
+.tb-level input { margin-top: 0; padding: 8px 10px; font-size: var(--fs-sm); }
 .tb-crit-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .tb-spacer { flex: 1; }
 
 .tb-runs { margin-top: 10px; }
 .tb-runrow { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; width: 100%; text-align: left;
-  border: 0; border-top: 1px solid #f0f0f4; background: none; padding: 8px 0; cursor: pointer; font: inherit; font-size: 11px; }
+  border: 0; border-top: 1px solid #f0f0f4; background: none; padding: 8px 0; cursor: pointer; font: inherit; font-size: var(--fs-xs); }
 .tb-runrow span { font-weight: 700; } .tb-runrow span.ok { color: #087448; } .tb-runrow span.bad { color: var(--red); } .tb-runrow span.wait { color: #7c3aed; }
-.tb-runrow small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+.tb-runrow small { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-xs); }
 
 /* Конвейер агентов: методисту важно не «раунд 1/1», а кто сейчас работает и
    зачем. Поэтому шаг — это строка «кто · что делает», а не техническая метка. */
@@ -916,42 +916,42 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-pipeline li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; position: relative; }
 .tb-pipeline li + li { border-top: 1px solid #f0f0f4; }
 .tb-step-mark { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 50%;
-  background: #f3f4f8; color: #b7b7c6; font-size: 13px; font-weight: 700; }
+  background: #f3f4f8; color: #b7b7c6; font-size: var(--fs-sm); font-weight: 700; }
 .tb-pipeline li.done .tb-step-mark { background: #e7f8f0; color: #087448; }
 .tb-pipeline li.failed .tb-step-mark { background: #fee2e2; color: #b91c1c; }
 .tb-pipeline li.active .tb-step-mark { background: #f2e8fc; }
 .tb-step-mark .tb-spinner { width: 14px; height: 14px; display: block; }
-.tb-step-body b { display: block; font-size: 13px; }
-.tb-step-body small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 3px; }
+.tb-step-body b { display: block; font-size: var(--fs-sm); }
+.tb-step-body small { display: block; color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; margin-top: 3px; }
 .tb-pipeline li.pending .tb-step-body b, .tb-pipeline li.pending .tb-step-body small { color: #b7b7c6; }
 .tb-pipeline li.active .tb-step-body b { color: var(--purple); }
 
 .tb-progress { display: flex; align-items: center; gap: 14px; }
-.tb-progress small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; line-height: 1.5; }
+.tb-progress small { display: block; color: var(--muted); font-size: var(--fs-xs); margin-top: 4px; line-height: 1.5; }
 .tb-progress button { margin-left: auto; }
 .tb-spinner { width: 18px; height: 18px; flex: none; border: 2px solid #cfcfe0; border-top-color: #8b5cf6;
   border-radius: 50%; animation: tb-spin .8s linear infinite; }
 @keyframes tb-spin { to { transform: rotate(360deg); } }
 .tb-failed { border-left: 4px solid var(--red); }
 .tb-ok { border-left: 4px solid #047857; } .tb-attention { border-left: 4px solid #b45309; }
-.tb-what { color: #555; font-size: 12px; line-height: 1.6; margin: 6px 0; }
-.tb-counts { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 10px; font-size: 12px; }
-.tb-sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; font-style: normal; }
+.tb-what { color: #555; font-size: var(--fs-sm); line-height: 1.6; margin: 6px 0; }
+.tb-counts { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 10px; font-size: var(--fs-sm); }
+.tb-sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 700; font-style: normal; }
 .tb-sev.high { background: #fee2e2; color: #b91c1c; } .tb-sev.medium { background: #fef3c7; color: #92400e; }
 .tb-sev.low { background: #eef0f3; color: #4b5563; } .tb-sev.ok { background: #dcfce7; color: #166534; }
 
 /* Строка на персону, а не сетка: персон четыре, в три колонки они ложились
    криво, а читать их всё равно нужно подряд — это разные точки зрения. */
 .tb-personas { display: grid; gap: 10px; }
-.tb-persona { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 12px; }
+.tb-persona { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: var(--fs-sm); }
 .tb-persona-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tb-face { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%;
-  background: #f3f4f8; font-size: 18px; line-height: 1; }
+  background: #f3f4f8; font-size: var(--fs-xl); line-height: 1; }
 .tb-persona-name { flex: 1; min-width: 180px; }
-.tb-persona-name b { display: block; font-size: 13px; }
-.tb-persona-name small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.tb-persona-name b { display: block; font-size: var(--fs-sm); }
+.tb-persona-name small { display: block; color: var(--muted); font-size: var(--fs-xs); margin-top: 2px; }
 .tb-persona-marks { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.tb-persona-marks em { font-style: normal; font-size: 11px; padding: 3px 9px; border-radius: 999px; background: #f3f4f8; color: #4b5563; }
+.tb-persona-marks em { font-style: normal; font-size: var(--fs-xs); padding: 3px 9px; border-radius: 999px; background: #f3f4f8; color: #4b5563; }
 .tb-persona-marks em.ok { color: #087448; background: #e7f8f0; }
 .tb-persona-marks em.bad { color: #9a6810; background: #fff3d4; }
 .tb-persona-marks .tb-points i { font-style: normal; color: var(--muted); }
@@ -959,48 +959,48 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-persona-list { margin: 6px 0 0 16px; color: #6b6b80; line-height: 1.55; }
 
 .tb-spreads { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-.tb-spreads > div > b { font-size: 12px; }
+.tb-spreads > div > b { font-size: var(--fs-sm); }
 .tb-spread-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center;
-  border-top: 1px solid #f0f0f4; padding: 7px 0; font-size: 12px; }
-.tb-spread-row em { font-style: normal; color: var(--muted); font-size: 11px; }
+  border-top: 1px solid #f0f0f4; padding: 7px 0; font-size: var(--fs-sm); }
+.tb-spread-row em { font-style: normal; color: var(--muted); font-size: var(--fs-xs); }
 .tb-spread-row b.bad { color: #9a6810; }
 
 .tb-samples { display: flex; align-items: flex-start; gap: 14px; margin-top: 16px; padding-top: 14px;
   border-top: 1px solid var(--line); }
 .tb-samples > span { flex: 1; }
-.tb-samples b { display: block; font-size: 13px; }
-.tb-samples small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 4px; }
-.tb-samples select { flex: 0 0 auto; min-width: 170px; padding: 9px 11px; font: inherit; font-size: 12px;
+.tb-samples b { display: block; font-size: var(--fs-sm); }
+.tb-samples small { display: block; color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; margin-top: 4px; }
+.tb-samples select { flex: 0 0 auto; min-width: 170px; padding: 9px 11px; font: inherit; font-size: var(--fs-sm);
   border: 1px solid #dcdde3; border-radius: 10px; background: #fff; }
 
-.tb-rec { border-top: 1px solid #f0f0f4; padding: 14px 0; font-size: 12px; }
+.tb-rec { border-top: 1px solid #f0f0f4; padding: 14px 0; font-size: var(--fs-sm); }
 .tb-rec-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.tb-where { color: var(--muted); font-size: 11px; }
+.tb-where { color: var(--muted); font-size: var(--fs-xs); }
 .tb-why { color: #444; margin: 6px 0 0; line-height: 1.55; }
 .tb-effect { color: #6d28d9; font-weight: 600; margin: 4px 0 0; }
-.tb-evidence { margin-top: 6px; color: var(--muted); font-size: 11px; }
+.tb-evidence { margin-top: 6px; color: var(--muted); font-size: var(--fs-xs); }
 .tb-diff { display: grid; gap: 6px; margin-top: 8px; }
 .tb-diff .was { color: #9ca3af; text-decoration: line-through; white-space: pre-wrap; }
 .tb-diff .now { color: #065f46; background: #f0fdf7; border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; }
 .tb-rec-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-.tb-rec-edit textarea { display: block; width: 100%; margin-top: 8px; padding: 10px 12px; font: inherit; font-size: 12px;
+.tb-rec-edit textarea { display: block; width: 100%; margin-top: 8px; padding: 10px 12px; font: inherit; font-size: var(--fs-sm);
   border: 1px solid #dcdde3; border-radius: 10px; resize: vertical; }
 .tb-decided { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; align-items: center;
-  border-top: 1px solid #f0f0f4; padding: 10px 0; font-size: 12px; }
+  border-top: 1px solid #f0f0f4; padding: 10px 0; font-size: var(--fs-sm); }
 .tb-decided small { color: var(--muted); }
-.tb-meta { color: var(--muted); font-size: 11px; margin-top: 12px; }
+.tb-meta { color: var(--muted); font-size: var(--fs-xs); margin-top: 12px; }
 
 .tb-modal { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px; background: rgba(20,22,30,.45); }
 .tb-modal-card { width: min(760px, 100%); max-height: 86vh; overflow: auto; }
 .tb-preview { display: grid; gap: 12px; margin-top: 12px; }
-.tb-preview small { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
-.tb-preview textarea { display: block; width: 100%; padding: 10px 12px; font: inherit; font-size: 12px;
+.tb-preview small { display: block; color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.tb-preview textarea { display: block; width: 100%; padding: 10px 12px; font: inherit; font-size: var(--fs-sm);
   border: 1px solid #dcdde3; border-radius: 10px; resize: vertical; }
 .tb-choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px;
   padding: 12px; margin-top: 10px; cursor: pointer; }
 .tb-choice.active { border-color: var(--blue); background: #f6fbff; }
-.tb-choice b { display: block; font-size: 13px; }
-.tb-choice small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 4px; }
+.tb-choice b { display: block; font-size: var(--fs-sm); }
+.tb-choice small { display: block; color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; margin-top: 4px; }
 
 @media (max-width: 980px) {
   .two-columns { grid-template-columns: 1fr; }

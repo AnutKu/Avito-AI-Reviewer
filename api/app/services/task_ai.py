@@ -427,6 +427,16 @@ def run_stages(
         active = keys.index(stage) if stage in keys else 0
 
     done_now = stage_count(progress)
+    totals = {"solving": personas, "grading": personas * max(1, samples)}
+    # Счётчик дошёл до предела — значит шаг уже закончился, а следующий агент
+    # (обычно критик, и он думает долго) просто ещё не отчитался. Без этого
+    # экран показывал «готово 20 из 20» и продолжал крутить спиннер на нём.
+    if status not in ("completed", "failed") and done_now:
+        key = keys[active] if active < len(keys) else None
+        if key in totals and done_now >= totals[key] and active + 1 < len(keys):
+            active += 1
+            done_now = None
+
     rows = []
     for index, (key, title, note) in enumerate(plan):
         if status == "failed" and index == active:
@@ -439,9 +449,8 @@ def run_stages(
             state = "pending"
         # На идущем шаге показываем, сколько уже готово: без этого длинная стадия
         # выглядит как зависшая.
-        if state == "active" and done_now and key in ("solving", "grading"):
-            total = personas if key == "solving" else personas * max(1, samples)
-            note = f"{note} Готово: {done_now} из {total}."
+        if state == "active" and done_now and key in totals:
+            note = f"{note} Готово: {done_now} из {totals[key]}."
         rows.append({"key": key, "title": title, "note": note, "state": state})
     return rows
 

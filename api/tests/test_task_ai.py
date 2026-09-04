@@ -378,8 +378,9 @@ def states(rows):
 
 
 def test_stages_mark_where_the_run_is_now():
+    # Двое из четырёх — решатели ещё работают.
     rows = run_stages(
-        status="running", progress="раунд 1/1: решают профили (4)", persona_type="reviewer"
+        status="running", progress="раунд 1/1: решают профили (2)", persona_type="reviewer"
     )
     assert states(rows) == {
         "snapshot": "done", "solving": "active",
@@ -389,7 +390,7 @@ def test_stages_mark_where_the_run_is_now():
 
 def test_grading_stage_lights_up_next():
     rows = run_stages(
-        status="running", progress="раунд 1/1: предварительное ревью решений (4)", persona_type="both"
+        status="running", progress="раунд 1/1: предварительное ревью решений (2)", persona_type="both"
     )
     assert states(rows)["solving"] == "done"
     assert states(rows)["grading"] == "active"
@@ -402,7 +403,7 @@ def test_a_completed_run_shows_every_stage_done():
 
 def test_a_failed_run_marks_the_stage_that_broke():
     rows = run_stages(
-        status="failed", progress="раунд 1/1: предварительное ревью решений (4)", persona_type="reviewer"
+        status="failed", progress="раунд 1/1: предварительное ревью решений (2)", persona_type="reviewer"
     )
     assert states(rows)["grading"] == "failed"
     assert states(rows)["solving"] == "done"
@@ -464,3 +465,38 @@ def test_grading_counts_include_the_repeats():
 def test_a_finished_stage_does_not_carry_a_counter():
     rows = run_stages(status="completed", progress="готово", persona_type="reviewer")
     assert not [row for row in rows if "Готово:" in row["note"]]
+
+
+def test_a_finished_counter_moves_the_run_on():
+    """20 из 20 и спиннер на том же шаге — это уже неправда: считает следующий."""
+
+    rows = run_stages(
+        status="running", progress="раунд 1/1: предварительное ревью решений (20)",
+        persona_type="reviewer", personas=4, samples=5,
+    )
+    assert states(rows)["grading"] == "done"
+    assert states(rows)["critique"] == "active"
+
+
+def test_all_solutions_in_means_grading_started():
+    rows = run_stages(
+        status="running", progress="раунд 1/1: решают профили (4)", persona_type="reviewer", personas=4
+    )
+    assert states(rows)["solving"] == "done"
+    assert states(rows)["grading"] == "active"
+
+
+def test_a_partial_counter_keeps_the_stage_active():
+    rows = run_stages(
+        status="running", progress="раунд 1/1: предварительное ревью решений (7)",
+        persona_type="reviewer", personas=4, samples=5,
+    )
+    assert states(rows)["grading"] == "active"
+    assert "Готово: 7 из 20" in next(r for r in rows if r["key"] == "grading")["note"]
+
+
+def test_the_last_stage_never_advances_past_itself():
+    rows = run_stages(
+        status="running", progress="раунд 1/1: решают профили (4)", persona_type="student", personas=4
+    )
+    assert [row["state"] for row in rows][-1] != "done" or states(rows)["report"] == "active"
