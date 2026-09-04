@@ -84,6 +84,11 @@ class Assignment(Base):
     current_rubric_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     # NULL = черновик; студенты и реестр работ видят только опубликованные.
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Блоки задания, которых нет в доменной схеме кабинета: тема, уровень,
+    # образовательная цель, ожидаемый результат, ограничения, материалы,
+    # заметки ревьюеру, эталон. Одним JSONB, а не десятком колонок: кабинет по
+    # ним не ищет и не считает — их читают редактор, экспорт и AI-прогон.
+    authoring: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = now_col()
 
     course: Mapped[Course] = relationship()

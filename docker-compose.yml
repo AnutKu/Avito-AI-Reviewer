@@ -46,6 +46,9 @@ services:
       # с других машин (по IP/сетевому имени), а не только на localhost.
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
       AI_REVIEWER_URL: http://ai-reviewer:8010
+      # Движок конструктора заданий. В него ходит только api: задание хранит
+      # кабинет, поэтому браузеру этот адрес знать незачем.
+      TASKCREATER_URL: http://taskcreater:8000
       AI_REVIEWER_MODEL: ${ZAI_MODEL:-glm-5.3-flash}
       AI_REVIEWER_TIMEOUT_SECONDS: ${AI_REVIEWER_TIMEOUT_SECONDS:-150}
       MAX_SNAPSHOT_CHARS: ${MAX_SNAPSHOT_CHARS:-120000}
@@ -68,6 +71,10 @@ services:
         condition: service_healthy
       ai-reviewer:
         condition: service_healthy
+      # Не service_healthy: конструктор нужен только по требованию, и его
+      # недоступность кабинет переживает — отвечает 503 и сохраняет черновик.
+      taskcreater:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s

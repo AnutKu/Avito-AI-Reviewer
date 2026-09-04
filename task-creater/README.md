@@ -134,7 +134,7 @@
 ```bash
 cp .env.example .env          # LLM-доступ для task-creater — там же (или оставить fake)
 docker compose up --build     # postgres + api + ui + taskcreater
-# кабинет: http://localhost:8080  (методист → «AI-конструктор ДЗ»)
+# кабинет: http://localhost:8080  (методист → «Банк заданий и критериев»)
 # Swagger: http://localhost:8080/task-creater/docs
 ```
 

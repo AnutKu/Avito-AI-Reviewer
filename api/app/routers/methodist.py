@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import get_db
 from ..models import (
+    AiRecommendation,
+    AiRun,
     Assignment,
     Course,
     Enrollment,
@@ -22,7 +24,14 @@ from ..models import (
     User,
 )
 from ..security import require
-from ..serializers import assignment_data, iso, submission_data
+from ..serializers import (
+    ai_run_data,
+    assignment_data,
+    iso,
+    recommendation_data,
+    submission_data,
+)
+from ..services import task_ai
 from ..services.analytics import course_report, performance_report
 from ..services.assignment import (
     assign_submission,
@@ -37,6 +46,7 @@ from ..services.distribution import (
     reviewer_loads,
 )
 from ..services.review_pipeline import start_pending_scoring
+from ..services.taskcreater_client import TaskCreaterError, TaskCreaterUnavailable
 
 router = APIRouter(prefix="/methodist", tags=["methodist"])
 methodist_guard = require(Role.METHODIST)
@@ -94,6 +104,12 @@ class CriterionIn(BaseModel):
     title: str = Field(min_length=1)
     max_score: float = Field(gt=0, le=100)
     student_hint: str = ""
+    # Скрытая от студента часть критерия. Кабинет её не показывает студенту, но
+    # хранит: по ней работают AI-ревьюеры и ей же оперируют правки от прогона.
+    description: str = ""
+    check_kind: str = ""
+    evidence_hint: str = ""
+    expected_signals: list[str] = Field(default_factory=list)
     # Градация внутри критерия. Приходит из конструктора заданий, вручную
     # заводить её не обязательно: у рубрики без градации критерий по-прежнему
     # оценивается «сколько-то из максимума».
@@ -109,6 +125,7 @@ class AssignmentIn(BaseModel):
     submission_channel: str = "github"
     criteria: list[CriterionIn] = Field(min_length=1)
     pass_score: float = Field(default=0, ge=0)
+    authoring: dict = Field(default_factory=dict)
     publish: bool = False  # сразу опубликовать (по умолчанию создаётся черновик)
 
 
@@ -118,10 +135,58 @@ class AssignmentPatch(BaseModel):
     deadline_at: datetime | None = None
     effort_weight: float | None = Field(default=None, gt=0, le=10)
     submission_channel: str | None = None
+    authoring: dict | None = None
 
 
 class PublishPayload(BaseModel):
     published: bool = True
+
+
+class AiFillPayload(BaseModel):
+    """Заполнить или улучшить один блок. Ответ — предложение, не запись."""
+
+    field: str = Field(min_length=1)
+    mode: str = "fill"
+    current: str = ""
+    instruction: str = ""
+    context: dict = Field(
+        default_factory=dict, description="уже заполненные блоки — как они выглядят в редакторе"
+    )
+
+
+class DraftFromIdeaPayload(BaseModel):
+    idea: str = Field(min_length=10)
+    track: str = "General"
+    task_format: str = "auto"
+    total_points: float = Field(default=10, gt=0)
+    constraints: str = ""
+
+
+class AiRunPayload(BaseModel):
+    persona_type: str = Field(
+        description="student — проверить постановку; reviewer — критерии; both — и то и другое"
+    )
+    samples: int = Field(
+        default=1, ge=1, le=5,
+        description="Сколько раз оценить каждое решение — чтобы увидеть разброс самой модели",
+    )
+    idempotency_key: str | None = Field(default=None, max_length=64)
+
+
+class CriterionAssistPayload(BaseModel):
+    """Достроить критерий до применимого. Ответ — предложение, не запись."""
+
+    title: str = Field(min_length=1)
+    max_score: float = Field(gt=0, le=100)
+    student_hint: str = ""
+    description: str = ""
+    context: dict = Field(default_factory=dict)
+
+
+class RecommendationDecision(BaseModel):
+    expected_revision: int | None = None
+    value: str = ""  # для «Редактировать»: текст, который подтвердил человек
+    reason: str = ""  # для «Отклонить»
 
 
 def feature(enabled: bool) -> None:
@@ -435,7 +500,7 @@ def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get
     result = []
     for row in rows:
         rubric = db.get(RubricVersion, row.current_rubric_version_id)
-        data = assignment_data(row, rubric, full=True)
+        data = assignment_data(row, rubric, full=True, authoring=True)
         data["rubric_version"] = rubric.version if rubric else None
         data["rubric_note"] = rubric.note if rubric else ""
         data["rubric_versions"] = db.scalar(
@@ -449,6 +514,10 @@ def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get
             .select_from(Submission)
             .where(Submission.assignment_id == row.id)
         ) or 0
+        last_run = db.scalars(
+            select(AiRun).where(AiRun.assignment_id == row.id).order_by(AiRun.created_at.desc())
+        ).first()
+        data["last_run"] = ai_run_data(last_run) if last_run else None
         result.append(data)
     return result
 
@@ -463,6 +532,7 @@ def _assignment_snapshot(assignment: Assignment) -> dict:
         "deadline_at": iso(assignment.deadline_at),
         "effort_weight": assignment.effort_weight,
         "submission_channel": assignment.submission_channel,
+        "authoring": assignment.authoring or {},
     }
 
 
@@ -481,13 +551,20 @@ def _criterion_dict(criterion: CriterionIn, seen: set[str]) -> dict:
         raise HTTPException(
             422, f"Критерий «{criterion.title.strip()}»: уровень {over[0]} больше максимума"
         )
-    return {
+    row = {
         "key": key,
         "title": criterion.title.strip(),
         "max_score": float(criterion.max_score),
         "student_hint": criterion.student_hint.strip(),
         "levels": [level.model_dump() for level in levels],
     }
+    # Скрытые поля кладём только заполненными: пустой ключ в рубрике ничего не
+    # значит, а версии критериев сравниваются по равенству словарей.
+    for field in ("description", "check_kind", "evidence_hint", "expected_signals"):
+        value = getattr(criterion, field)
+        if value:
+            row[field] = value.strip() if isinstance(value, str) else value
+    return row
 
 
 @router.post("/assignments", status_code=201)
@@ -517,6 +594,7 @@ def create_assignment(
         deadline_at=payload.deadline_at,
         effort_weight=payload.effort_weight,
         submission_channel=payload.submission_channel,
+        authoring=payload.authoring or {},
         published_at=datetime.now(UTC) if payload.publish else None,
     )
     db.add(assignment)
@@ -767,6 +845,7 @@ def restore_rubric(
         assignment.submission_channel = snap.get(
             "submission_channel", assignment.submission_channel
         )
+        assignment.authoring = snap.get("authoring", assignment.authoring)
         raw_deadline = snap.get("deadline_at")
         assignment.deadline_at = (
             datetime.fromisoformat(raw_deadline) if raw_deadline else None
@@ -845,3 +924,366 @@ def update_course(
     course.tone_of_voice = payload.tone_of_voice
     db.commit()
     return {"ok": True, "updated_at": iso(datetime.now(UTC))}
+
+
+# --------------------------------------------------------------------------- #
+#  AI-инструменты внутри работы над заданием
+#
+#  Помощь по блоку и проверка на персонах — не отдельный раздел и не отдельное
+#  хранилище: задание всё время лежит здесь, движок только считает. Поэтому в
+#  task-creater ходит сервер, а не браузер, и ни один ответ агента не попадает
+#  в задание без явного решения человека.
+# --------------------------------------------------------------------------- #
+
+
+def _bump_rubric(
+    db: Session,
+    assignment: Assignment,
+    *,
+    criteria: list[dict],
+    pass_score: float,
+    author_id: UUID | None,
+    note: str,
+) -> RubricVersion:
+    """Новая версия рубрики. Опубликованная версия не правится никогда."""
+
+    latest = db.scalar(
+        select(func.max(RubricVersion.version)).where(RubricVersion.assignment_id == assignment.id)
+    ) or 0
+    rubric = RubricVersion(
+        assignment_id=assignment.id,
+        version=latest + 1,
+        criteria=criteria,
+        max_score=sum(float(item.get("max_score", 0)) for item in criteria),
+        pass_score=pass_score,
+        author_id=author_id,
+        note=note,
+        assignment_snapshot=_assignment_snapshot(assignment),
+    )
+    db.add(rubric)
+    db.flush()
+    assignment.current_rubric_version_id = rubric.id
+    return rubric
+
+
+def _assignment_or_404(db: Session, assignment_id: UUID) -> Assignment:
+    feature(settings.feature_rubric_builder)
+    assignment = db.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "Задание не найдено")
+    return assignment
+
+
+def _engine_call(action, *args, **kwargs):
+    """Единая трансляция отказов движка в 503: конструктор — внешний сервис."""
+
+    try:
+        return action(*args, **kwargs)
+    except TaskCreaterUnavailable as exc:
+        raise HTTPException(503, "Конструктор заданий недоступен. Черновик сохранён.") from exc
+    except TaskCreaterError as exc:
+        raise HTTPException(502, f"Конструктор заданий ответил ошибкой: {exc}") from exc
+
+
+@router.post("/ai-fill")
+def ai_fill(payload: AiFillPayload, user: User = Depends(methodist_guard)) -> dict:
+    """Предложение по одному блоку. Ничего не сохраняет — вставляет человек.
+
+    Контекст приходит от редактора, а не из базы, и это важно: помощник должен
+    видеть то, что методист набрал прямо сейчас, включая несохранённое. Поэтому
+    же ручка не привязана к заданию — она работает и для ещё не созданного.
+    """
+
+    del user
+    feature(settings.feature_rubric_builder)
+    context = {k: v for k, v in payload.context.items() if isinstance(v, str) and v}
+    context.pop(payload.field, None)
+    out = _engine_call(
+        task_ai.client().assist_field,
+        field=task_ai.FIELD_TITLES.get(payload.field, payload.field),
+        mode="improve" if payload.mode == "improve" else "fill",
+        current=payload.current,
+        instruction=payload.instruction,
+        context=context,
+    )
+    return {"field": payload.field, "proposed": out.get("proposed", ""), "note": out.get("note", "")}
+
+
+@router.post("/ai-criterion")
+def ai_criterion(payload: CriterionAssistPayload, user: User = Depends(methodist_guard)) -> dict:
+    """Достроить критерий: признаки сильного ответа и уровни с порогами.
+
+    Без них ревьюер не может поставить балл однозначно — и прогон валидации
+    возвращает это замечанием чаще всего остального. Дешевле попросить агента
+    сразу, чем чинить потом правкой по итогам прогона.
+    """
+
+    del user
+    feature(settings.feature_rubric_builder)
+    out = _engine_call(
+        task_ai.client().assist_criterion,
+        title=payload.title,
+        max_points=payload.max_score,
+        student_hint=payload.student_hint,
+        description=payload.description,
+        task_context={k: v for k, v in payload.context.items() if isinstance(v, str) and v},
+    )
+    return task_ai.from_engine_criterion(out)
+
+
+@router.post("/assignments/draft-from-idea", status_code=202)
+def draft_from_idea(payload: DraftFromIdeaPayload, user: User = Depends(methodist_guard)) -> dict:
+    """Ставит сборку черновика в очередь и сразу отдаёт номер задачи.
+
+    Синхронного ответа здесь быть не может: задание с критериями и эталоном
+    собирается одну-две минуты, и запрос успевал упереться в таймаут прокси
+    (кабинет показывал 504 вместо результата). Готовность спрашивают отдельной
+    ручкой — страницу при этом можно закрыть, сборка идёт на сервере.
+
+    В кабинете при этом ничего не создаётся: результат — предпросмотр, который
+    методист правит и сохраняет сам. Иначе кнопка «Сформировать» плодила бы
+    мусорные задания на каждый эксперимент.
+    """
+
+    del user
+    feature(settings.feature_rubric_builder)
+    out = _engine_call(
+        task_ai.client().generate_task,
+        {
+            "idea": payload.idea,
+            "track": payload.track,
+            "task_format": payload.task_format,
+            "total_points": payload.total_points,
+            "constraints": payload.constraints or None,
+            "language": "ru",
+        },
+    )
+    return {"job_id": out["id"], "status": "generating", "track": payload.track}
+
+
+@router.get("/assignments/draft-from-idea/{job_id}")
+def draft_from_idea_status(
+    job_id: str,
+    track: str = "",
+    total_points: float = 10,
+    user: User = Depends(methodist_guard),
+) -> dict:
+    """Готовность черновика. `ready` — в ответе лежит предпросмотр."""
+
+    del user
+    feature(settings.feature_rubric_builder)
+    out = _engine_call(task_ai.client().get_task, job_id)
+    state = out.get("gen_status")
+    if state == "generating":
+        return {"status": "generating"}
+    if state == "generation_failed":
+        return {"status": "failed", "error": out.get("gen_error") or "Сборка черновика не удалась"}
+    draft = task_ai.draft_from_engine_task(out, track=track, total_points=total_points)
+    return {"status": "ready", "draft": draft}
+
+
+@router.post("/assignments/{assignment_id}/ai-runs", status_code=202)
+def start_ai_run(
+    assignment_id: UUID,
+    payload: AiRunPayload,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Запуск проверки на персонах ОДНОГО типа.
+
+    Второй тип запускается отдельно и после — по актуальной на тот момент
+    ревизии. Сам по себе прогон ничего не публикует и ничего не переписывает.
+    """
+
+    assignment = _assignment_or_404(db, assignment_id)
+    if payload.persona_type not in task_ai.PERSONA_TYPES:
+        raise HTTPException(422, "Тип персон: student или reviewer")
+    rubric = db.get(RubricVersion, assignment.current_rubric_version_id)
+    if not rubric or not rubric.criteria:
+        raise HTTPException(422, "Нужен хотя бы один критерий — иначе проверять нечего")
+
+    existing = task_ai.reusable_run(db, assignment.id, payload.idempotency_key)
+    if existing and (payload.idempotency_key or existing.status in task_ai.OPEN_STATUSES):
+        return ai_run_data(existing)
+
+    run = task_ai.create_run(
+        db,
+        assignment,
+        persona_type=payload.persona_type,
+        idempotency_key=payload.idempotency_key,
+        created_by=user.id,
+        samples=payload.samples,
+    )
+    task_ai.start(db, run, background_tasks)
+    return ai_run_data(run)
+
+
+@router.get("/assignments/{assignment_id}/ai-runs")
+def ai_runs(
+    assignment_id: UUID,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """История прогонов задания, новые сверху."""
+
+    del user
+    _assignment_or_404(db, assignment_id)
+    rows = db.scalars(
+        select(AiRun).where(AiRun.assignment_id == assignment_id).order_by(AiRun.created_at.desc())
+    )
+    return [ai_run_data(row) for row in rows]
+
+
+@router.get("/ai-runs/{run_id}")
+def ai_run(
+    run_id: UUID,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Один прогон с рекомендациями. Отсюда же экран берёт прогресс."""
+
+    del user
+    feature(settings.feature_rubric_builder)
+    run = db.get(AiRun, run_id)
+    if not run:
+        raise HTTPException(404, "Прогон не найден")
+    assignment = db.get(Assignment, run.assignment_id)
+    data = ai_run_data(run, run.recommendations)
+    # Результат всегда относится к своей ревизии: если задание правили после
+    # прогона, экран обязан это сказать, а не выдавать разбор за актуальный.
+    data["assignment_revision"] = task_ai.current_revision(db, assignment) if assignment else None
+    data["stale"] = data["assignment_revision"] not in (None, run.revision)
+    return data
+
+
+def _decision(db: Session, recommendation_id: UUID, expected_revision: int | None):
+    feature(settings.feature_rubric_builder)
+    row = db.get(AiRecommendation, recommendation_id)
+    if not row:
+        raise HTTPException(404, "Рекомендация не найдена")
+    run = db.get(AiRun, row.run_id)
+    assignment = db.get(Assignment, run.assignment_id) if run else None
+    if not assignment:
+        raise HTTPException(404, "Задание не найдено")
+    if row.status != "new":
+        raise HTTPException(409, "По этой рекомендации решение уже принято")
+    # Защита от гонки: пока прогон обсуждали, поле могли поменять в другой
+    # вкладке. Тихо перезаписать чужую правку хуже, чем показать расхождение.
+    revision = task_ai.current_revision(db, assignment)
+    if expected_revision is not None and expected_revision != revision:
+        raise HTTPException(
+            409,
+            f"Задание изменилось с момента прогона (ревизия {revision}). "
+            "Откройте сравнение и примените правку вручную.",
+        )
+    return row, assignment
+
+
+def _apply_recommendation(
+    db: Session, row: AiRecommendation, assignment: Assignment, value: str, author_id: UUID
+) -> None:
+    rubric = db.get(RubricVersion, assignment.current_rubric_version_id)
+    if row.target_type == "criterion" and (row.payload or {}).get("operation"):
+        criteria = task_ai.criteria_after(rubric.criteria if rubric else [], row.payload, value)
+        _bump_rubric(
+            db,
+            assignment,
+            criteria=criteria,
+            pass_score=rubric.pass_score if rubric else 0,
+            author_id=author_id,
+            note=f"Правка по рекомендации AI ({row.target_id or 'критерий'})",
+        )
+        return
+    if row.target_type == "criterion":  # подсказка студенту у конкретного критерия
+        criteria = [dict(item) for item in (rubric.criteria if rubric else [])]
+        for item in criteria:
+            if item.get("key") == row.target_id:
+                item[row.target_field or "student_hint"] = value
+        _bump_rubric(
+            db,
+            assignment,
+            criteria=criteria,
+            pass_score=rubric.pass_score if rubric else 0,
+            author_id=author_id,
+            note="Правка критерия по рекомендации AI",
+        )
+        return
+
+    field = row.target_field or "statement"
+    if field == "statement":
+        assignment.statement = value
+    else:
+        assignment.authoring = {**(assignment.authoring or {}), field: value}
+    db.flush()
+    _bump_rubric(
+        db,
+        assignment,
+        criteria=rubric.criteria if rubric else [],
+        pass_score=rubric.pass_score if rubric else 0,
+        author_id=author_id,
+        note="Правка задания по рекомендации AI",
+    )
+
+
+@router.post("/ai-recommendations/{recommendation_id}/apply")
+def apply_recommendation(
+    recommendation_id: UUID,
+    payload: RecommendationDecision,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Принять предложение агента как есть."""
+
+    row, assignment = _decision(db, recommendation_id, payload.expected_revision)
+    if not row.proposed_value:
+        raise HTTPException(422, "У этой рекомендации нет готового текста — отредактируйте вручную")
+    _apply_recommendation(db, row, assignment, row.proposed_value, user.id)
+    row.status = "applied"
+    row.final_value = row.proposed_value
+    row.decided_at = datetime.now(UTC)
+    db.commit()
+    return recommendation_data(row)
+
+
+@router.post("/ai-recommendations/{recommendation_id}/edit")
+def edit_recommendation(
+    recommendation_id: UUID,
+    payload: RecommendationDecision,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Принять свой вариант вместо предложенного.
+
+    Исходное предложение остаётся в `proposed_value`: разница между тем, что
+    предложил агент, и тем, что оставил человек, — единственный честный
+    материал для оценки качества самих рекомендаций.
+    """
+
+    if not payload.value.strip():
+        raise HTTPException(422, "Пустой текст правки")
+    row, assignment = _decision(db, recommendation_id, payload.expected_revision)
+    _apply_recommendation(db, row, assignment, payload.value, user.id)
+    row.status = "edited"
+    row.final_value = payload.value
+    row.decided_at = datetime.now(UTC)
+    db.commit()
+    return recommendation_data(row)
+
+
+@router.post("/ai-recommendations/{recommendation_id}/reject")
+def reject_recommendation(
+    recommendation_id: UUID,
+    payload: RecommendationDecision,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Отклонить. Задание не меняется, рекомендация остаётся видимой."""
+
+    del user
+    row, _ = _decision(db, recommendation_id, None)
+    row.status = "rejected"
+    row.rejection_reason = payload.reason or None
+    row.decided_at = datetime.now(UTC)
+    db.commit()
+    return recommendation_data(row)

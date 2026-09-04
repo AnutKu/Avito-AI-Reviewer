@@ -428,11 +428,91 @@ def _fake_critic_output(system: str, user: str):
     )
 
 
+def _line_after(text: str, label: str) -> str:
+    for line in text.splitlines():
+        if line.startswith(label):
+            return line[len(label) :].strip()
+    return ""
+
+
+def _fake_field_assist(system: str, user: str):
+    """Оффлайн-предложение по блоку.
+
+    Держится того же контракта, что и живая модель: в режиме improve исходный
+    текст сохраняется и дополняется, в режиме fill собирается заготовка. Так
+    экран «предпросмотр → вставить» проверяется без доступа к шлюзу.
+    """
+
+    del system
+    from app.schemas import FieldAssistOut
+
+    field = _line_after(user, "Блок:") or "Блок"
+    improve = "улучшить" in _line_after(user, "Режим:")
+    body = user.split("Текущее содержимое блока:", 1)[-1].split("Чего добиться:", 1)[0].strip()
+    current = "" if body == "(пусто)" else body
+    want = user.split("Чего добиться:", 1)[-1].strip()
+    want = "" if want.startswith("(") else want
+
+    if improve and current:
+        proposed = (
+            f"{current}\n\n"
+            f"Уточнение: {want or 'сформулировано однозначно, добавлены проверяемые условия'}. "
+            "Ожидаемый результат описан измеримо, границы применимости названы явно."
+        )
+        note = "Смысл сохранён, добавлены проверяемые формулировки."
+    else:
+        proposed = (
+            f"{field}. {want or 'Опишите ситуацию, задачу и ожидаемый результат.'}\n\n"
+            "Что нужно сделать: [дополните по своему курсу].\n"
+            "Как поймём, что сделано: [критерий готовности]."
+        )
+        note = "Заготовка блока — заполните места в скобках."
+    return FieldAssistOut(field=field, proposed=proposed, note=note)
+
+
+def _fake_criterion(system: str, user: str):
+    """Офлайн-критерий: с признаками и уровнями — ровно то, чего требует промпт."""
+
+    del system
+    from app.schemas import Criterion
+
+    title = _line_after(user, "Критерий:") or "Критерий"
+    try:
+        top = float(_line_after(user, "Максимум баллов:") or 5)
+    except ValueError:
+        top = 5.0
+    key = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:30] or "criterion"
+    return Criterion(
+        key=key,
+        title=title,
+        max_points=top,
+        student_hint=f"Оценивается {title.lower()}: полнота и обоснованность.",
+        description=f"Проверяемый признак по критерию «{title}»: наличие расчёта, обоснования и вывода.",
+        check_kind="subjective",
+        evidence_hint="раздел решения, относящийся к этому критерию",
+        expected_signals=[
+            "приведён расчёт с формулой и исходными числами",
+            "выбор обоснован сравнением с альтернативой",
+            "сформулирован вывод, а не пересказ данных",
+        ],
+        rubric_levels=_scaled_ladder(
+            top,
+            [
+                ("Не выполнено", "признаков в работе нет"),
+                ("Частично", "есть расчёт, но без обоснования выбора"),
+                ("Полно", "есть расчёт, обоснование и вывод"),
+            ],
+        ),
+    )
+
+
 _BUILDERS = {
     "GeneratedTask": _fake_generated_task,
     "SolverOutput": _fake_solver_output,
     "GraderOutput": _fake_grader_output,
     "CriticOutput": _fake_critic_output,
+    "FieldAssistOut": _fake_field_assist,
+    "Criterion": _fake_criterion,
 }
 
 

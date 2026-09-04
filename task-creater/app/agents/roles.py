@@ -15,7 +15,10 @@ from app.llm import prompts as P
 from app.schemas import (
     CourseIdeaIn,
     Criterion,
+    CriterionAssistIn,
     CriticOutput,
+    FieldAssistIn,
+    FieldAssistOut,
     GeneratedTask,
     GraderOutput,
     SolverOutput,
@@ -87,15 +90,50 @@ def critique(
     criteria: list[Criterion],
     gradings: list[GraderOutput],
     solvers: list[SolverOutput],
+    persona_type: str = "reviewer",
 ) -> CriticOutput:
     return llm.structured(
         system=P.CRITIC_SYSTEM,
-        user=P.critic_user(task, criteria, gradings, solvers),
+        user=P.critic_user(task, criteria, gradings, solvers, P.CRITIC_FOCUS.get(persona_type, "")),
         schema=CriticOutput,
         tier="smart",
         temperature=0.3,
         max_tokens=8000,
     )
+
+
+def assist_criterion(llm: LLMClient, body: CriterionAssistIn) -> Criterion:
+    """Достраивает критерий до применимого: признаки и уровни с порогами.
+
+    Именно их отсутствие AI-ревьюеры возвращают замечанием чаще всего — дешевле
+    попросить агента сразу, чем чинить это потом правкой по итогам прогона.
+    """
+
+    out = llm.structured(
+        system=P.CRITERION_SYSTEM,
+        user=P.criterion_user(
+            body.title, body.max_points, body.student_hint, body.description, body.task_context
+        ),
+        schema=Criterion,
+        tier="smart",
+        temperature=0.3,
+        max_tokens=3000,
+    )
+    return out.model_copy(update={"title": body.title, "max_points": body.max_points})
+
+
+def assist_field(llm: LLMClient, body: FieldAssistIn) -> FieldAssistOut:
+    """Предложение по одному блоку. Ничего не сохраняет — решает человек."""
+
+    out = llm.structured(
+        system=P.ASSIST_SYSTEM,
+        user=P.assist_user(body.field, body.mode, body.current, body.instruction, body.context),
+        schema=FieldAssistOut,
+        tier="smart",
+        temperature=0.4,
+        max_tokens=3000,
+    )
+    return out.model_copy(update={"field": body.field})
 
 
 def _normalize_points(task: TaskDraftData, target_total: float) -> TaskDraftData:

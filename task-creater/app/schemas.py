@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -73,7 +73,7 @@ class Criterion(BaseModel):
     )
 
     @model_validator(mode="after")
-    def levels_form_a_scale(self) -> "Criterion":
+    def levels_form_a_scale(self) -> Criterion:
         """Градация — это шкала критерия, а не набор заметок к нему.
 
         Проверяется ровно то, без чего балл по ней не поставить: уровни идут по
@@ -181,7 +181,7 @@ class GeneratedTask(TaskDraftData):
     """
 
     @model_validator(mode="after")
-    def every_criterion_is_graded(self) -> "GeneratedTask":
+    def every_criterion_is_graded(self) -> GeneratedTask:
         for criterion in self.criteria:
             gap = grading_gap(criterion)
             if gap:
@@ -312,7 +312,12 @@ class RoundArtifact(BaseModel):
     findings: list[Finding]
     proposed_edits: list[CriterionEdit]
     score_matrix: dict[str, dict[str, float]] = Field(
-        description="{criterion_key: {persona: points}} — для наглядного показа расхождений"
+        description="{criterion_key: {persona: points}} — средний балл по сэмплам"
+    )
+    score_samples: dict[str, dict[str, list[float]]] = Field(
+        default_factory=dict,
+        description="{criterion_key: {persona: [баллы по каждому сэмплу]}} — разброс модели "
+        "на одном и том же решении",
     )
     converged: bool
     convergence_reason: str
@@ -408,6 +413,20 @@ class ValidationConfigIn(BaseModel):
     personas: list[str] | None = Field(
         default=None, description="ключи профилей решателей; null — набор по умолчанию"
     )
+    persona_type: Literal["student", "reviewer", "both"] = Field(
+        default="reviewer",
+        description="Что разбирать: student — понятна ли постановка задания, reviewer — "
+        "однозначны ли критерии, both — и то и другое за один прогон. Тип задаёт фокус "
+        "критика; решатели работают всегда, потому что без решений сравнивать нечего.",
+    )
+    grader_samples: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="Сколько раз оценить КАЖДОЕ решение по рубрике. Больше одного — чтобы "
+        "увидеть стохастический разброс самой модели: если один и тот же ответ по одному и "
+        "тому же критерию получает разные баллы, дело не в решении, а в формулировке.",
+    )
     max_rounds: int = Field(default=2, ge=1, le=4)
     token_budget: int = Field(default=200_000, ge=10_000)
     model_fast: str | None = None
@@ -478,6 +497,43 @@ class PersonaOut(BaseModel):
     key: str
     title: str
     description: str
+
+
+# --------------------------------------------------------------------------- #
+#  Точечная помощь по одному блоку задания
+# --------------------------------------------------------------------------- #
+
+
+class FieldAssistIn(BaseModel):
+    """Заполнить или улучшить ОДИН блок задания.
+
+    Сервис ничего не хранит и ничего не переписывает: возвращает предложение,
+    решение принимает человек на стороне кабинета.
+    """
+
+    field: str = Field(description="человекочитаемое имя блока: «Условие», «Критерий: …»")
+    mode: Literal["fill", "improve"] = "fill"
+    current: str = Field(default="", description="что сейчас в блоке; для fill обычно пусто")
+    instruction: str = Field(default="", description="чего добиться — например, текст рекомендации")
+    context: dict[str, Any] = Field(
+        default_factory=dict, description="уже заполненные блоки задания: title, statement, …"
+    )
+
+
+class FieldAssistOut(BaseModel):
+    field: str
+    proposed: str
+    note: str = Field(default="", description="одной строкой: что изменено и почему")
+
+
+class CriterionAssistIn(BaseModel):
+    """Достроить критерий до проверяемого: описание, признаки, уровни."""
+
+    title: str = Field(min_length=1)
+    max_points: float = Field(gt=0)
+    student_hint: str = ""
+    description: str = ""
+    task_context: dict[str, Any] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
