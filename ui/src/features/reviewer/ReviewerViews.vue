@@ -19,13 +19,51 @@ const showAllQueue = ref(false)
 // По умолчанию в очереди — работы, которые ждут действия ревьюера.
 // «blitz_sent» = ждём ответа студента, взять в работу нельзя.
 const ACTIONABLE = ['assigned', 'in_review', 'blitz_answered']
+const actionable = computed(() => queue.value.filter(i => ACTIONABLE.includes(i.status)))
+
+const sortBy = ref('deadline')
+const assignmentFilter = ref('')
+const studentFilter = ref('')
+
+// Дедлайн может быть не задан. Такие работы уходят вниз в обоих направлениях:
+// «без срока» — не «очень рано» и не «очень поздно», сравнивать его не с чем.
+function byDeadline(a, b, direction) {
+  if (!a.deadline_at || !b.deadline_at) return (a.deadline_at ? 0 : 1) - (b.deadline_at ? 0 : 1)
+  return direction * (new Date(a.deadline_at) - new Date(b.deadline_at))
+}
+
+const QUEUE_SORTS = {
+  deadline: { label: 'Дедлайн проверки: ближайший первым', compare: (a, b) => byDeadline(a, b, 1) },
+  deadline_desc: { label: 'Дедлайн проверки: поздний первым', compare: (a, b) => byDeadline(a, b, -1) },
+  assignment: { label: 'Задание: А–Я', compare: (a, b) => a.assignment.localeCompare(b.assignment, 'ru') },
+  student: { label: 'Студент: А–Я', compare: (a, b) => a.student.localeCompare(b.student, 'ru') },
+}
+
+function options(field) {
+  return [...new Set(queue.value.map(i => i[field]))].sort((a, b) => a.localeCompare(b, 'ru'))
+}
+const assignmentOptions = computed(() => options('assignment'))
+const studentOptions = computed(() => options('student'))
+const hasFilters = computed(() => Boolean(assignmentFilter.value || studentFilter.value))
+
+// Очередь у ревьюера короткая и приходит целиком, поэтому фильтры и сортировка
+// живут на клиенте. Порядок по умолчанию тот же, что отдаёт сервер.
 const visibleQueue = computed(() =>
-  showAllQueue.value ? queue.value : queue.value.filter(i => ACTIONABLE.includes(i.status)),
+  (showAllQueue.value ? queue.value : actionable.value)
+    .filter(i => !assignmentFilter.value || i.assignment === assignmentFilter.value)
+    .filter(i => !studentFilter.value || i.student === studentFilter.value)
+    .sort(QUEUE_SORTS[sortBy.value].compare),
 )
 
 async function loadQueue() {
   loading.value = true
-  try { queue.value = await api('/reviewer/queue') }
+  try {
+    queue.value = await api('/reviewer/queue')
+    // Работу могли завершить или передать другому — фильтр по ней остался бы
+    // выбранным и показывал бы пустой список без видимой причины.
+    if (!assignmentOptions.value.includes(assignmentFilter.value)) assignmentFilter.value = ''
+    if (!studentOptions.value.includes(studentFilter.value)) studentFilter.value = ''
+  }
   catch (e) { error.value = e.message }
   finally { loading.value = false }
 }
@@ -207,19 +245,7 @@ async function complete() {
 const totals = computed(() => reviewTotals(current.value?.review?.items))
 const totalMax = computed(() => current.value?.review?.max_score ?? totals.value.max_score ?? null)
 
-// Что действительно требует внимания на этой работе. Раньше блок висел всегда
-// с постоянным текстом и советовал проверить то, чего в работе могло не быть.
 const snapshotFiles = computed(() => current.value?.snapshot?.parsed_facts?.files || [])
-const needsAttention = computed(() => {
-  const items = current.value?.review?.items || []
-  const unsure = items.filter(i => i.confidence === 'low' && i.reviewer_action === 'pending')
-  const signals = (current.value?.review?.signals || []).filter(s => s.reviewer_decision === 'pending')
-  const notes = []
-  if (unsure.length) notes.push(`критериев с низкой уверенностью: ${unsure.length}`)
-  if (signals.length) notes.push(`нерешённых AI-сигналов: ${signals.length}`)
-  if (current.value?.review?.ai_status === 'failed') notes.push('AI-разбор не выполнен')
-  return notes
-})
 
 watch(() => props.active, value => {
   error.value = ''
@@ -231,35 +257,37 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
 
 <template>
   <section v-if="active === 'reviewer-queue'">
-    <div class="page-heading"><div><h1>Моя очередь</h1></div><div class="queue-summary"><b>{{ visibleQueue.length }}</b><small>ждут действия</small></div></div>
+    <div class="page-heading"><div><h1>Моя очередь</h1></div><div class="queue-summary"><b>{{ actionable.length }}</b><small>ждут действия</small></div></div>
+    <div class="registry-tools queue-tools">
+      <select v-model="sortBy"><option v-for="(sort, key) in QUEUE_SORTS" :key="key" :value="key">{{ sort.label }}</option></select>
+      <select v-model="assignmentFilter"><option value="">Все задания</option><option v-for="title in assignmentOptions" :key="title" :value="title">{{ title }}</option></select>
+      <select v-model="studentFilter"><option value="">Все студенты</option><option v-for="name in studentOptions" :key="name" :value="name">{{ name }}</option></select>
+    </div>
     <div class="filter-row">
       <label class="chk"><input type="checkbox" v-model="showAllQueue" /> Показывать все актуальные работы</label>
       <span />
-      <small v-if="!showAllQueue && queue.length > visibleQueue.length">скрыто «ждёт ответа студента»: {{ queue.length - visibleQueue.length }}</small>
+      <small v-if="!showAllQueue && queue.length > actionable.length">скрыто «ждёт ответа студента»: {{ queue.length - actionable.length }}</small>
     </div>
-    <div class="table-card">
-      <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>AI-разбор</span><span>Срок</span><span /></div>
+    <div class="table-card queue-table">
+      <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>Дедлайн проверки</span></div>
       <button v-for="item in visibleQueue" :key="item.id" class="table-row" :disabled="item.status === 'blitz_sent'" @click="item.status !== 'blitz_sent' && openReview(item.id)">
         <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}<template v-if="item.is_overdue"> · сдано после срока</template></small></span></span>
         <StatusBadge :status="item.status" />
-        <span class="ai-ready" :class="[item.ai_status, { demo: item.is_demo }]"><i>✦</i>{{ item.is_demo ? 'Демо-фикстура' : aiStatusNames[item.ai_status] || item.ai_status }}</span>
         <span :class="{ danger: item.deadline_state === 'overdue', warn: item.deadline_state === 'risk' }"><b>{{ formatDate(item.deadline_at, true) }}</b><small v-if="item.deadline_state === 'overdue'">Срок вышел</small><small v-else-if="item.deadline_state === 'risk'">Меньше суток</small></span>
-        <strong class="row-arrow">{{ item.status === 'blitz_sent' ? '⏳' : '→' }}</strong>
       </button>
-      <div v-if="!loading && !visibleQueue.length" class="empty-mini padded">{{ queue.length ? 'Все работы в очереди ждут ответа студента — включите «показывать все актуальные»' : 'Очередь пуста' }}</div>
+      <div v-if="!loading && !visibleQueue.length" class="empty-mini padded">{{ !queue.length ? 'Очередь пуста' : hasFilters ? 'Под выбранные фильтры работ нет' : 'Все работы в очереди ждут ответа студента — включите «показывать все актуальные»' }}</div>
     </div>
   </section>
 
   <section v-else-if="active === 'reviewer-history'">
     <div class="page-heading"><div><h1>История</h1></div><div class="queue-summary"><b>{{ history.length }}</b><small>всего работ</small></div></div>
-    <div class="table-card">
-      <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>Балл</span><span>Сдано</span><span /></div>
+    <div class="table-card history-table">
+      <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>Балл</span><span>Сдано</span></div>
       <button v-for="item in history" :key="item.id" class="table-row" :disabled="!item.is_current || item.status === 'completed'" @click="item.is_current && item.status !== 'completed' && openReview(item.id)">
         <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}</small></span></span>
         <StatusBadge :status="item.status" />
         <span><b>{{ item.final_score ?? '—' }}</b><small v-if="item.final_score != null && item.max_score != null">из {{ item.max_score }}</small></span>
         <span><b>{{ formatDate(item.submitted_at, true) }}</b><small v-if="item.completed_at">проверено {{ formatDate(item.completed_at, true) }}</small></span>
-        <strong class="row-arrow">{{ item.is_current && item.status !== 'completed' ? '→' : '' }}</strong>
       </button>
       <div v-if="!history.length" class="empty-mini padded">Здесь появятся все проверенные вами работы</div>
     </div>
@@ -275,18 +303,16 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
       <div class="score-total-meta">
         <b>{{ totals.total && !totals.pending ? 'Итоговый балл за работу' : 'Предварительный балл за работу' }}</b>
         <small v-if="!totals.total">Разбора по критериям ещё нет — {{ aiStatusNames[current.review.ai_status] || current.review.ai_status }}.</small>
-        <small v-else-if="totals.pending">Решено {{ totals.decided }} из {{ totals.total }} критериев. По остальным пока стоит оценка AI — она станет вашей, когда вы примете решение ниже.</small>
-        <small v-else>Решения приняты по всем {{ totals.total }} критериям. Публикация выставит студенту это число.</small>
+        <small v-else-if="totals.pending">Утверждено {{ totals.decided }} из {{ totals.total }} критериев. По остальным пока стоит оценка AI — она станет вашей, когда вы примете решение ниже.</small>
+        <small v-else>Утверждены все {{ totals.total }} критериев. Публикация выставит студенту это число.</small>
         <div v-if="totals.total" class="score-total-bar"><i :style="{ width: `${Math.round((totals.decided / totals.total) * 100)}%` }" /></div>
       </div>
     </section>
     <div class="review-workspace">
       <article class="notebook-panel"><header><div class="file-tab" :title="snapshotFiles.join('\n')"><span>◇</span>{{ snapshotFiles[0] || 'Снапшот решения' }}<i v-if="snapshotFiles.length > 1">+{{ snapshotFiles.length - 1 }}</i></div><a :href="current.submission.source_url" target="_blank">GitHub ↗</a></header><pre>{{ current.snapshot.content }}</pre><footer><span>Снапшот сохранён {{ formatDate(current.snapshot.fetched_at, true) }}</span><span>Повторных запросов к GitHub нет</span></footer></article>
       <aside class="review-panel">
-        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР · {{ current.review.is_demo ? 'ДЕМО-ФИКСТУРА' : 'Z.AI' }}</span><b><MarkdownText v-if="current.review.summary" inline :text="current.review.summary" /><template v-else>{{ current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован' }}</template></b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
-        <div v-if="current.review.is_demo" class="fixture-note">Эта карточка — неизменяемый демонстрационный пример. Новые сдачи проверяются реальной моделью Z.AI.</div>
+        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР</span><b><MarkdownText v-if="current.review.summary" inline :text="current.review.summary" /><template v-else>{{ current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован' }}</template></b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
         <div v-if="current.review.ai_status === 'failed'" class="toast-error">Z.AI: {{ current.review.ai_error }}</div>
-        <section v-if="needsAttention.length" class="attention-panel"><h3><span>!</span> Панель внимания</h3><p>{{ needsAttention.join(' · ') }}</p></section>
 
         <section v-if="current.detection" class="review-section detection-panel">
           <div class="section-title"><h2>Признаки использования AI</h2><span>На балл не влияет</span></div>
@@ -321,7 +347,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
             <details v-if="current.detection.limitations"><summary>Ограничения метода</summary><MarkdownText :text="current.detection.limitations" /></details>
           </template>
         </section>
-        <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} решено</span></div>
+        <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} утверждено</span></div>
           <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">
             <header><div><span class="confidence" :class="item.confidence">{{ item.confidence === 'high' ? 'Высокая' : item.confidence === 'medium' ? 'Средняя' : 'Низкая' }}</span><h3>{{ item.criterion_title }}</h3></div><strong>{{ item.ai_score }} <small>/ {{ item.max_score }}</small></strong></header>
             <MarkdownText :text="item.recommendation" /><div class="evidence" v-for="proof in item.evidence" :key="proof.quote"><span>“</span><code>{{ proof.quote }}</code><small>{{ proof.anchor }}</small></div>
@@ -407,5 +433,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
     </div>
   </section>
 
+  <!-- Открытой работы нет. Пункта «Ревью» в меню больше нет, но по прямой
+       ссылке или после перезагрузки страницы сюда ещё можно попасть. -->
   <section v-else-if="active === 'reviewer-review'" class="empty-state"><span>⌁</span><h2>Выберите работу из очереди</h2><button class="primary" @click="emit('navigate', 'reviewer-queue')">Открыть очередь</button></section>
 </template>
