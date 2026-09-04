@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
+import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 import TaskCreaterView from './TaskCreaterView.vue'
 
@@ -589,7 +590,7 @@ onMounted(load)
             <button class="text-button" @click="criteriaDraft.push(emptyCriterion())">＋ ещё критерий</button>
           </template>
           <template v-else>
-            <p class="rubric-statement">{{ item.statement || 'Условие не заполнено' }}</p>
+            <MarkdownText v-if="item.statement" class="rubric-statement" :text="item.statement" /><p v-else class="rubric-statement">Условие не заполнено</p>
             <div class="rubric-summary"><span><b>{{ item.max_score ?? '—' }}</b><small>макс. балл</small></span><span><b>{{ item.rubric.length }}</b><small>критериев</small></span><span><b>{{ item.effort_weight }}</b><small>трудоёмкость</small></span><span><b>{{ item.deadline_at ? formatDate(item.deadline_at, true) : '—' }}</b><small>дедлайн</small></span></div>
             <div class="criteria-table"><div v-for="(criterion, index) in item.rubric" :key="criterion.key"><span>{{ index + 1 }}</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></div>
             <div class="rubric-actions"><p>{{ item.rubric_note || '—' }}</p><button v-if="!item.published" class="secondary danger" @click="deleteAssignment(item)">Удалить</button><button class="secondary" @click="startEditAssignment(item)">✎ Задание</button><button class="secondary" @click="startCriteria(item)">✎ Критерии</button><button v-if="!item.published" class="primary" @click="publishAssignment(item, true)">Опубликовать</button><button v-else class="secondary" @click="publishAssignment(item, false)">Снять с публикации</button></div>
