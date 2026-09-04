@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { aiStatusNames, api, formatDate } from '../../shared/api'
+import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
 const props = defineProps({ active: String })
@@ -265,7 +266,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
     <div class="review-workspace">
       <article class="notebook-panel"><header><div class="file-tab" :title="snapshotFiles.join('\n')"><span>◇</span>{{ snapshotFiles[0] || 'Снапшот решения' }}<i v-if="snapshotFiles.length > 1">+{{ snapshotFiles.length - 1 }}</i></div><a :href="current.submission.source_url" target="_blank">GitHub ↗</a></header><pre>{{ current.snapshot.content }}</pre><footer><span>Снапшот сохранён {{ formatDate(current.snapshot.fetched_at, true) }}</span><span>Повторных запросов к GitHub нет</span></footer></article>
       <aside class="review-panel">
-        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР · {{ current.review.is_demo ? 'ДЕМО-ФИКСТУРА' : 'Z.AI' }}</span><b>{{ current.review.summary || (current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован') }}</b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
+        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР · {{ current.review.is_demo ? 'ДЕМО-ФИКСТУРА' : 'Z.AI' }}</span><b><MarkdownText v-if="current.review.summary" inline :text="current.review.summary" /><template v-else>{{ current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован' }}</template></b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
         <div v-if="current.review.is_demo" class="fixture-note">Эта карточка — неизменяемый демонстрационный пример. Новые сдачи проверяются реальной моделью Z.AI.</div>
         <div v-if="current.review.ai_status === 'failed'" class="toast-error">Z.AI: {{ current.review.ai_error }}</div>
         <section v-if="needsAttention.length" class="attention-panel"><h3><span>!</span> Панель внимания</h3><p>{{ needsAttention.join(' · ') }}</p></section>
@@ -287,7 +288,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
               </div>
               <button class="ai-rerun" :disabled="current.submission.status === 'completed'" @click="rerunDetection">↻ Перепроверить</button>
             </div>
-            <p v-if="current.detection.summary" class="detection-summary">{{ current.detection.summary }}</p>
+            <MarkdownText v-if="current.detection.summary" class="detection-summary" :text="current.detection.summary" />
             <div v-for="item in current.detection.contributions" :key="item.key" class="detection-row" :class="item.direction > 0 ? 'up' : 'down'">
               <span class="detection-points">{{ item.points > 0 ? '+' : '' }}{{ item.points }}</span>
               <span class="detection-body">
@@ -300,18 +301,18 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
               <h3><span>?</span> Стоит задать вопросы по работе</h3>
               <p>Индекс выше порога {{ current.detection.blitz_threshold }}. Это повод проверить понимание, а не снизить балл: решение о баллах принимаете вы и только по критериям.</p>
             </div>
-            <details v-if="current.detection.limitations"><summary>Ограничения метода</summary><p>{{ current.detection.limitations }}</p></details>
+            <details v-if="current.detection.limitations"><summary>Ограничения метода</summary><MarkdownText :text="current.detection.limitations" /></details>
           </template>
         </section>
         <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} решено</span></div>
           <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">
             <header><div><span class="confidence" :class="item.confidence">{{ item.confidence === 'high' ? 'Высокая' : item.confidence === 'medium' ? 'Средняя' : 'Низкая' }}</span><h3>{{ item.criterion_title }}</h3></div><strong>{{ item.ai_score }} <small>/ {{ item.max_score }}</small></strong></header>
-            <p>{{ item.recommendation }}</p><div class="evidence" v-for="proof in item.evidence" :key="proof.quote"><span>“</span><code>{{ proof.quote }}</code><small>{{ proof.anchor }}</small></div>
+            <MarkdownText :text="item.recommendation" /><div class="evidence" v-for="proof in item.evidence" :key="proof.quote"><span>“</span><code>{{ proof.quote }}</code><small>{{ proof.anchor }}</small></div>
             <div v-if="item.reviewer_action === 'pending'" class="decision-box"><div class="edit-inline"><label>Ваш балл<input v-model="item.editScore" type="number" min="0" :max="item.max_score" step="0.5" /></label><label>Комментарий<input v-model="item.editComment" placeholder="Необязательно" /></label></div><div class="decision-actions"><button class="accept" @click="decideItem(item, 'accepted')">✓ Принять</button><button @click="decideItem(item, 'changed')">Изменить</button><button class="reject" @click="decideItem(item, 'rejected')">Отклонить</button></div></div>
             <div v-else class="decision-done">✓ Решение: {{ { accepted: 'принято', changed: 'изменено', rejected: 'отклонено' }[item.reviewer_action] }} <button @click="item.reviewer_action = 'pending'">Изменить</button></div>
           </article>
         </section>
-        <section class="review-section"><div class="section-title"><h2>AI-сигнал</h2><span>Не влияет на балл</span></div><article v-for="signal in current.review.signals" :key="signal.id" class="signal-card"><header><span class="signal-icon">⌁</span><div><small>{{ signal.kind === 'ai_use' ? 'ВОЗМОЖНОЕ ИСПОЛЬЗОВАНИЕ AI' : 'РИСК ПОНИМАНИЯ' }}</small><h3>{{ signal.summary }}</h3></div><span class="confidence" :class="signal.level">{{ signal.level }}</span></header><ul><li v-for="ground in signal.grounds" :key="ground">{{ ground }}</li></ul><details><summary>Ограничения метода</summary><p>{{ signal.limitations }}</p></details><div v-if="signal.reviewer_decision === 'pending'" class="decision-actions"><button class="accept" @click="decideSignal(signal, 'confirmed')">Подтвердить сигнал</button><button @click="decideSignal(signal, 'dismissed')">Отклонить</button></div><div v-else class="decision-done">Решение сохранено: {{ signal.reviewer_decision }}</div></article></section>
+        <section class="review-section"><div class="section-title"><h2>AI-сигнал</h2><span>Не влияет на балл</span></div><article v-for="signal in current.review.signals" :key="signal.id" class="signal-card"><header><span class="signal-icon">⌁</span><div><small>{{ signal.kind === 'ai_use' ? 'ВОЗМОЖНОЕ ИСПОЛЬЗОВАНИЕ AI' : 'РИСК ПОНИМАНИЯ' }}</small><h3><MarkdownText inline :text="signal.summary" /></h3></div><span class="confidence" :class="signal.level">{{ signal.level }}</span></header><ul><li v-for="ground in signal.grounds" :key="ground"><MarkdownText inline :text="ground" /></li></ul><details><summary>Ограничения метода</summary><MarkdownText :text="signal.limitations" /></details><div v-if="signal.reviewer_decision === 'pending'" class="decision-actions"><button class="accept" @click="decideSignal(signal, 'confirmed')">Подтвердить сигнал</button><button @click="decideSignal(signal, 'dismissed')">Отклонить</button></div><div v-else class="decision-done">Решение сохранено: {{ signal.reviewer_decision }}</div></article></section>
         <section v-if="current.submission.status === 'in_review'" class="review-section">
           <div class="section-title"><h2>Дополнительные вопросы</h2><span>До 48 часов на ответ</span></div>
           <p class="muted">Вопросы составляются по этому решению — на них нельзя ответить, не открыв работу. Студент не увидит упоминаний AI-сигнала.</p>
@@ -323,7 +324,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
             <label v-for="question in current.blitz_draft.questions" :key="question.id" class="question-check">
               <input v-model="picked[question.id]" type="checkbox" />
               <span>
-                <b>{{ question.text }}</b>
+                <b><MarkdownText inline :text="question.text" /></b>
                 <small>{{ QUESTION_TYPES[question.type] || question.type }} · {{ question.anchor }}</small>
                 <em class="expected">Понимающий ответ покажет: {{ question.expected_points.join('; ') }}</em>
               </span>
@@ -340,12 +341,12 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
           <template v-else>
             <p v-if="current.blitz.ai_analysis?.status === 'running' || current.blitz.ai_analysis?.status === 'pending'" class="muted">Разбор ответов выполняется…</p>
             <p v-else-if="current.blitz.ai_analysis?.status === 'failed'" class="toast-error">Разбор не выполнен: {{ current.blitz.ai_analysis.error }}</p>
-            <p v-else-if="current.blitz.ai_analysis?.summary" class="detection-summary">{{ current.blitz.ai_analysis.summary }}</p>
+            <MarkdownText v-else-if="current.blitz.ai_analysis?.summary" class="detection-summary" :text="current.blitz.ai_analysis.summary" />
 
             <article v-for="question in current.blitz.questions" :key="question.id" class="blitz-answer">
-              <header><b>{{ question.text }}</b><span v-if="assessmentFor(question.id)" class="confidence" :class="assessmentFor(question.id).verdict === 'consistent' ? 'high' : assessmentFor(question.id).verdict === 'partial' ? 'medium' : 'low'">{{ ANSWER_VERDICTS[assessmentFor(question.id).verdict] }}</span></header>
+              <header><b><MarkdownText inline :text="question.text" /></b><span v-if="assessmentFor(question.id)" class="confidence" :class="assessmentFor(question.id).verdict === 'consistent' ? 'high' : assessmentFor(question.id).verdict === 'partial' ? 'medium' : 'low'">{{ ANSWER_VERDICTS[assessmentFor(question.id).verdict] }}</span></header>
               <blockquote>{{ answerText(question.id) || '— ответа нет —' }}</blockquote>
-              <p v-if="assessmentFor(question.id)" class="muted">{{ assessmentFor(question.id).note }}</p>
+              <MarkdownText v-if="assessmentFor(question.id)" class="muted" :text="assessmentFor(question.id).note" />
               <div v-for="ground in (assessmentFor(question.id)?.grounds || [])" :key="ground" class="evidence"><span>“</span><code>{{ ground }}</code></div>
               <div v-if="statsFor(question.id)" class="telemetry-row">
                 <span>{{ seconds(statsFor(question.id).active_ms) }} с за ответом</span>

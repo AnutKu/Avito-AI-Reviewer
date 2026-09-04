@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, taskCreater } from '../../shared/api'
+import MarkdownText from '../../shared/ui/MarkdownText.vue'
 
 // --- навигация экрана переживает выход в меню --------------------------------
 const NAV_KEY = 'taskcreater:nav'
@@ -465,13 +466,13 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
     <template v-else-if="task && !editing">
       <article class="card">
         <div class="rubric-head">
-          <div><h2>Что видит студент</h2><p>{{ task.data.summary }}</p></div>
+          <div><h2>Что видит студент</h2><MarkdownText :text="task.data.summary" /></div>
           <button class="text-button" @click="startEdit">✎ Редактировать</button>
         </div>
-        <p v-if="task.data.context_md" class="tc-block">{{ task.data.context_md }}</p>
-        <p class="tc-block"><b>Задача.</b> {{ task.data.statement_md }}</p>
+        <MarkdownText v-if="task.data.context_md" class="tc-block" :text="task.data.context_md" />
+        <div class="tc-block"><b>Задача.</b><MarkdownText :text="task.data.statement_md" /></div>
         <ol v-if="task.data.deliverables?.length" class="tc-deliverables"><li v-for="(d, i) in task.data.deliverables" :key="i">{{ d }}</li></ol>
-        <p v-if="task.data.public_rubric_note" class="tc-note">{{ task.data.public_rubric_note }}</p>
+        <MarkdownText v-if="task.data.public_rubric_note" class="tc-note" :text="task.data.public_rubric_note" />
         <div class="criteria-table">
           <div v-for="(c, i) in criteria" :key="c.key"><span>{{ i + 1 }}</span><b>{{ c.title }}</b><em>0–{{ c.max_points }} б.</em><small class="tc-hint">{{ c.student_hint || '—' }}</small></div>
         </div>
@@ -485,7 +486,7 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
         <div v-if="showHidden" class="tc-hidden">
           <article v-for="c in criteria" :key="c.key">
             <h4>{{ c.title }} <em>0–{{ c.max_points }} · {{ c.check_kind === 'objective' ? 'объективный' : 'субъективный' }}</em></h4>
-            <p>{{ c.description }}</p>
+            <MarkdownText :text="c.description" />
             <ul v-if="c.expected_signals?.length"><li v-for="(s, i) in c.expected_signals" :key="i">{{ s }}</li></ul>
             <div v-if="c.rubric_levels?.length" class="tc-levels"><span v-for="(lv, i) in c.rubric_levels" :key="i">{{ lv.points }} — {{ lv.label }}</span></div>
           </article>
@@ -503,7 +504,7 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
           <button class="primary" :disabled="grading || !gradeInput.trim()" @click="gradeSolution">{{ grading ? 'Оцениваю…' : 'Проверить решение' }}</button>
         </div>
         <div v-if="gradeResult" class="tc-grade-res">
-          <p class="tc-block"><b>Итого {{ gradeResult.total_points }} б.</b> — {{ gradeResult.overall_comment }}</p>
+          <div class="tc-block"><b>Итого {{ gradeResult.total_points }} б.</b><MarkdownText :text="gradeResult.overall_comment" /></div>
           <div v-for="s in gradeResult.scores" :key="s.criterion_key" class="tc-finding">
             <b>{{ s.criterion_key }}: {{ s.points }} / {{ s.max_points }}</b>
             <span v-if="!s.decidable" class="tc-target">рубрики не хватило</span>
@@ -649,7 +650,9 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
 .tc-sub { margin: 18px 0 8px; font-size: 15px; }
 .tc-crit-edit { border: 1px solid #eee; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #fcfcff; }
 
-.tc-block { margin: 8px 0; white-space: pre-line; }
+/* pre-line здесь больше не нужен: переносы разбирает markdown, а при
+   pre-line они дали бы вторую пустую строку поверх абзацев. */
+.tc-block { margin: 8px 0; }
 .tc-note { margin: 10px 0; padding: 10px 12px; background: #f5f4ff; border-radius: 8px; font-size: 13px; white-space: pre-line; }
 .tc-deliverables { margin: 8px 0 8px 18px; font-size: 14px; }
 .criteria-table .tc-hint { grid-column: 1 / -1; color: #6b6b80; font-size: 12px; margin-top: 2px; }

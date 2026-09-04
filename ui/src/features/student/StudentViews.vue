@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, formatDate } from '../../shared/api'
+import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
 const props = defineProps({ active: String })
@@ -151,7 +152,7 @@ onUnmounted(() => {
       <button class="back" @click="mode = 'list'">← Все задания</button>
       <div class="page-heading compact"><div><span class="eyebrow">ЗАДАНИЕ</span><h1>{{ detail.title }}</h1><p>{{ detail.course }} · дедлайн {{ formatDate(detail.deadline_at, true) }}</p></div></div>
       <div class="two-columns">
-        <article class="card prose-card"><h2>Условие</h2><p>{{ detail.statement }}</p><h2>Критерии оценки</h2><div v-for="criterion in detail.rubric" :key="criterion.key" class="criterion-short"><span>✓</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></article>
+        <article class="card prose-card"><h2>Условие</h2><MarkdownText :text="detail.statement" /><h2>Критерии оценки</h2><div v-for="criterion in detail.rubric" :key="criterion.key" class="criterion-short"><span>✓</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></article>
         <aside class="card submit-card"><span class="card-icon blue">↗</span><h2>Сдать работу</h2><p>Укажите ссылку на публичный GitHub-репозиторий. После отправки мы сохраним снапшот.</p><label>Ссылка на репозиторий<input v-model="sourceUrl" placeholder="https://github.com/..." /></label><button class="primary full" @click="submit">Отправить на проверку</button><small>После отправки ссылка будет зафиксирована</small></aside>
       </div>
     </template>
@@ -159,7 +160,7 @@ onUnmounted(() => {
     <template v-else-if="mode === 'result' && result">
       <button class="back" @click="mode = 'list'">← Все задания</button>
       <div class="result-hero"><div><span class="eyebrow">РАБОТА ПРОВЕРЕНА</span><h1>{{ result.submission.assignment }}</h1><p>Ревьюер подтвердил результат и опубликовал обратную связь</p></div><div class="big-score"><b>{{ result.review.final_score }}</b><small v-if="result.review.max_score != null">из {{ result.review.max_score }}</small></div></div>
-      <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b>{{ criterion.title }}</b><p>{{ criterion.comment }}</p></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2><p>{{ result.review.final_feedback }}</p><div class="human-note"><span>✓</span>Подтверждено ревьюером</div></aside></div>
+      <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b>{{ criterion.title }}</b><MarkdownText :text="criterion.comment" /></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2><MarkdownText :text="result.review.final_feedback" /><div class="human-note"><span>✓</span>Подтверждено ревьюером</div></aside></div>
     </template>
     <p v-if="error" class="form-error floating">{{ error }}</p>
   </section>
