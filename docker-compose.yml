@@ -42,6 +42,9 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-avito}:${POSTGRES_PASSWORD:-avito}@postgres:5432/${POSTGRES_DB:-avito_ai_reviewer}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       SEED_ON_START: ${SEED_ON_START:-true}
+      # По умолчанию любой источник — чтобы кабинет открывался и у коллег
+      # с других машин (по IP/сетевому имени), а не только на localhost.
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
       AI_REVIEWER_URL: http://ai-reviewer:8010
       AI_REVIEWER_MODEL: ${ZAI_MODEL:-glm-5.3-flash}
       AI_REVIEWER_TIMEOUT_SECONDS: ${AI_REVIEWER_TIMEOUT_SECONDS:-150}

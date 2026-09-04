@@ -104,6 +104,10 @@ class RubricVersion(Base):
     author_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     published_at: Mapped[datetime] = now_col()
     note: Mapped[str] = mapped_column(Text, default="")
+    # Снимок редактируемых полей задания (условие, срок, трудоёмкость, канал) на
+    # момент версии — чтобы «Вернуть» откатывал задание целиком, а не только
+    # критерии. Любая правка задания или критериев = новая версия.
+    assignment_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
 class Submission(Base):

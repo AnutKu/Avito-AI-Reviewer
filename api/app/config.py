@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     jwt_ttl_hours: int = 24
     seed_on_start: bool = True
 
+    # Кому браузер разрешает кросс-доменные запросы к API. "*" — любой источник:
+    # кабинет и коллеги с других машин ходят каждый со своего Origin, и без
+    # этого их запросы блокирует CORS. Список через запятую сужает до адресов.
+    cors_allow_origins: str = "*"
+
     ai_reviewer_url: str = "http://localhost:8010"
     ai_reviewer_model: str = "glm-5.3-flash"
     ai_reviewer_timeout_seconds: float = 150.0

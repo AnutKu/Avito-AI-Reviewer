@@ -283,6 +283,185 @@ def test_publish_new_rubric_version_via_criteria_editor(methodist):
     assert len(after["rubric"]) == len(item["rubric"]) + 1
 
 
+def test_rubric_version_history_lists_every_version_current_first(methodist):
+    item = methodist.get("/api/methodist/assignments").json()[0]
+    criteria = [{"key": c["key"], "title": c["title"], "max_score": c["max_score"]} for c in item["rubric"]]
+    criteria.append({"key": "", "title": "Ещё критерий", "max_score": 1})
+    methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics",
+        json={"criteria": criteria, "pass_score": 6, "note": "v+1"},
+    )
+    history = methodist.get(f"/api/methodist/assignments/{item['id']}/rubrics").json()
+    versions = [row["version"] for row in history]
+    assert versions == sorted(versions, reverse=True)
+    assert sum(row["is_current"] for row in history) == 1
+    assert history[0]["is_current"], "текущая версия идёт первой"
+
+
+def test_restore_old_rubric_makes_a_new_version_with_old_content(methodist):
+    item = methodist.get("/api/methodist/assignments").json()[0]
+    original = [{"key": c["key"], "title": c["title"], "max_score": c["max_score"]} for c in item["rubric"]]
+    base_version = item["rubric_version"]
+
+    changed = [*original, {"key": "", "title": "Временный критерий", "max_score": 3}]
+    methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics",
+        json={"criteria": changed, "pass_score": 6, "note": "лишний критерий"},
+    )
+
+    resp = methodist.post(f"/api/methodist/assignments/{item['id']}/rubrics/{base_version}/restore")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["restored_from"] == base_version
+    assert body["version"] == base_version + 2  # base -> +1 (правка) -> +2 (откат)
+
+    after = next(a for a in methodist.get("/api/methodist/assignments").json() if a["id"] == item["id"])
+    assert after["rubric_version"] == base_version + 2
+    assert [c["title"] for c in after["rubric"]] == [c["title"] for c in original]
+    assert "Откат к версии" in after["rubric_note"]
+
+
+def test_editing_the_assignment_bumps_the_rubric_version(methodist):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "Версионирование задания",
+            "statement": "старое условие",
+            "criteria": [{"title": "Критерий", "max_score": 5}],
+        },
+    ).json()
+    assert created["rubric_version"] == 1
+
+    # правка задания — версия растёт, как и у правки критериев
+    resp = methodist.patch(
+        f"/api/methodist/assignments/{created['id']}", json={"statement": "новое условие"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["versioned"] is True and body["rubric_version"] == 2
+
+    history = methodist.get(f"/api/methodist/assignments/{created['id']}/rubrics").json()
+    assert history[0]["version"] == 2 and history[0]["note"] == "Правка задания"
+
+    # повторное сохранение без изменений новую версию не плодит
+    again = methodist.patch(
+        f"/api/methodist/assignments/{created['id']}", json={"statement": "новое условие"}
+    ).json()
+    assert again["versioned"] is False and again["rubric_version"] == 2
+
+
+def test_restore_rolls_back_statement_not_just_criteria(methodist):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "Откат условия",
+            "statement": "исходное условие",
+            "criteria": [{"title": "Критерий", "max_score": 5}],
+        },
+    ).json()
+    methodist.patch(
+        f"/api/methodist/assignments/{created['id']}",
+        json={"statement": "переписанное условие", "title": "Откат условия · v2"},
+    )
+    restored = methodist.post(
+        f"/api/methodist/assignments/{created['id']}/rubrics/1/restore"
+    )
+    assert restored.status_code == 200
+    after = next(
+        a for a in methodist.get("/api/methodist/assignments").json() if a["id"] == created["id"]
+    )
+    assert after["statement"] == "исходное условие"
+    assert after["title"] == "Откат условия"
+
+
+def test_restore_rejects_missing_and_current_version(methodist):
+    item = methodist.get("/api/methodist/assignments").json()[0]
+    assert methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics/999/restore"
+    ).status_code == 404
+    assert methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics/{item['rubric_version']}/restore"
+    ).status_code == 409
+
+
+def test_rubric_history_is_methodist_only(reviewer):
+    assignment_id = "00000000-0000-0000-0000-000000000000"
+    assert reviewer.get(
+        f"/api/methodist/assignments/{assignment_id}/rubrics"
+    ).status_code == 403
+
+
+def test_delete_assignment_removes_it_with_its_rubric_versions(methodist):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={"title": "На удаление", "criteria": [{"title": "K", "max_score": 5}]},
+    ).json()
+    # добавим вторую версию рубрики — она тоже должна уйти
+    methodist.post(
+        f"/api/methodist/assignments/{created['id']}/rubrics",
+        json={"criteria": [{"title": "K", "max_score": 5}, {"title": "K2", "max_score": 2}], "pass_score": 4},
+    )
+
+    resp = methodist.delete(f"/api/methodist/assignments/{created['id']}")
+    assert resp.status_code == 200 and resp.json()["deleted"] == created["id"]
+
+    ids = [a["id"] for a in methodist.get("/api/methodist/assignments").json()]
+    assert created["id"] not in ids
+    assert methodist.get(f"/api/methodist/assignments/{created['id']}/rubrics").status_code == 404
+
+
+def test_delete_blocked_while_the_assignment_is_published(methodist):
+    published = next(a for a in methodist.get("/api/methodist/assignments").json() if a["published"])
+    resp = methodist.delete(f"/api/methodist/assignments/{published['id']}")
+    assert resp.status_code == 409
+    assert "снимите его с публикации" in resp.json()["detail"].lower()
+
+
+def test_unpublishing_lets_the_methodist_delete_the_work_and_its_grades(methodist):
+    from app.db import SessionLocal
+    from app.models import Review, RubricVersion, Submission
+
+    target = next(
+        a for a in methodist.get("/api/methodist/assignments").json()
+        if a["published"] and a["submissions"] > 0
+    )
+    with SessionLocal() as db:
+        sub_ids = list(
+            db.scalars(select(Submission.id).where(Submission.assignment_id == target["id"]))
+        )
+    assert len(sub_ids) == target["submissions"]
+
+    # пока опубликовано — нельзя
+    assert methodist.delete(f"/api/methodist/assignments/{target['id']}").status_code == 409
+
+    methodist.post(f"/api/methodist/assignments/{target['id']}/publish", json={"published": False})
+    resp = methodist.delete(f"/api/methodist/assignments/{target['id']}")
+    assert resp.status_code == 200 and resp.json()["submissions"] == len(sub_ids)
+
+    ids = [a["id"] for a in methodist.get("/api/methodist/assignments").json()]
+    assert target["id"] not in ids
+    with SessionLocal() as db:
+        assert db.scalars(
+            select(Submission).where(Submission.id.in_(sub_ids))
+        ).all() == [], "работы удалены вместе с заданием"
+        assert db.scalars(
+            select(Review).where(Review.submission_id.in_(sub_ids))
+        ).all() == [], "оценки ушли каскадом за работами"
+        assert db.scalars(
+            select(RubricVersion).where(RubricVersion.assignment_id == target["id"])
+        ).all() == [], "версии рубрики удалены"
+
+
+def test_delete_missing_assignment_is_404(methodist):
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert methodist.delete(f"/api/methodist/assignments/{missing}").status_code == 404
+
+
+def test_delete_assignment_is_methodist_only(reviewer):
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert reviewer.delete(f"/api/methodist/assignments/{missing}").status_code == 403
+
+
 def test_auto_assign_applies_to_freshly_submitted_work(methodist):
     from app.db import SessionLocal
     from app.models import Assignment, Course, Enrollment, Role, User
