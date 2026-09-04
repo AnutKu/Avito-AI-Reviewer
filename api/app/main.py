@@ -9,6 +9,7 @@ from .db import SessionLocal, engine
 from .models import Base
 from .routers import auth, common, methodist, reviewer, student
 from .seed import seed_demo
+from .services.review_pipeline import recover_orphaned_reviews
 
 # Точечные ALTER для колонок, добавленных после первого релиза, — чтобы
 # существующий demo-volume поднялся без пересоздания (Alembic в MVP нет).
@@ -33,13 +34,17 @@ async def lifespan(app: FastAPI):
     if settings.seed_on_start:
         with SessionLocal() as db:
             seed_demo(db)
+    # AI-ревью выполняется в BackgroundTasks этого же процесса, поэтому всё, что
+    # осталось в running, умерло вместе с предыдущим процессом. Без этого запись
+    # висит в running навсегда и её нельзя ни перезапустить, ни завершить.
+    recover_orphaned_reviews()
     yield
 
 
 app = FastAPI(
     title="Avito AI Reviewer Core API",
     version="0.1.0",
-    description="Core domain and mocked feature contracts for the unified cabinet.",
+    description="Core domain integrated with the isolated AI reviewer service.",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -58,4 +63,9 @@ app.include_router(methodist.router, prefix="/api")
 
 @app.get("/health", tags=["system"])
 def health() -> dict:
-    return {"status": "ok", "service": "core-api", "mock_mode": True}
+    return {
+        "status": "ok",
+        "service": "core-api",
+        "ai_reviewer_url": settings.ai_reviewer_url,
+        "ai_model": settings.ai_reviewer_model,
+    }

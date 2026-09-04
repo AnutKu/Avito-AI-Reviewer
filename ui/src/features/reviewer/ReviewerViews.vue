@@ -63,7 +63,27 @@ async function rewrite() {
   try {
     const result = await api(`/reviewer/reviews/${current.value.review.id}/rewrite-feedback`, { method: 'POST', body: JSON.stringify({ text: feedback.value }) })
     feedback.value = result.suggestion
-    notice.value = 'Предложен новый вариант — проверьте его перед публикацией'
+    notice.value = `Z.AI ${result.model} предложил новый вариант — проверьте его перед публикацией`
+  } catch (e) { error.value = e.message }
+}
+
+async function rerun() {
+  try {
+    await api(`/reviewer/reviews/${current.value.review.id}/rerun`, { method: 'POST' })
+    current.value.review.ai_status = 'running'
+    notice.value = 'Z.AI начал повторную проверку'
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      const updated = await api(`/reviewer/submissions/${current.value.submission.id}/review`)
+      current.value = updated
+      if (updated.review.ai_status !== 'running' && updated.review.ai_status !== 'pending') {
+        feedback.value = updated.review.draft_feedback
+        updated.review.items.forEach(item => { item.editScore = item.final_score ?? item.ai_score; item.editComment = item.reviewer_comment })
+        notice.value = updated.review.ai_status === 'ready' ? 'Проверка Z.AI готова' : ''
+        if (updated.review.ai_status === 'failed') error.value = updated.review.ai_error || 'Проверка Z.AI завершилась ошибкой'
+        break
+      }
+    }
   } catch (e) { error.value = e.message }
 }
 
@@ -105,7 +125,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
       <button v-for="item in visibleQueue" :key="item.id" class="table-row" :disabled="item.status === 'blitz_sent'" @click="item.status !== 'blitz_sent' && openReview(item.id)">
         <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}</small></span></span>
         <StatusBadge :status="item.status" />
-        <span class="ai-ready" :class="item.ai_status"><i>✦</i>{{ item.ai_status === 'ready' ? 'Готов' : item.ai_status }}</span>
+        <span class="ai-ready" :class="[item.ai_status, { demo: item.is_demo }]"><i>✦</i>{{ item.is_demo ? 'Демо-фикстура' : item.ai_status === 'ready' ? 'Готов' : item.ai_status }}</span>
         <span :class="{ danger: item.deadline_risk }"><b>{{ formatDate(item.deadline_at, true) }}</b><small v-if="item.deadline_risk">Риск просрочки</small></span>
         <strong class="row-arrow">{{ item.status === 'blitz_sent' ? '⏳' : '→' }}</strong>
       </button>
@@ -136,7 +156,9 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
     <div class="review-workspace">
       <article class="notebook-panel"><header><div class="file-tab"><span>◇</span>solution.ipynb</div><a :href="current.submission.source_url" target="_blank">GitHub ↗</a></header><pre>{{ current.snapshot.content }}</pre><footer><span>Снапшот сохранён {{ formatDate(current.snapshot.fetched_at, true) }}</span><span>Повторных запросов к GitHub нет</span></footer></article>
       <aside class="review-panel">
-        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР · ДЕМО</span><b>{{ current.review.summary }}</b><small>Модель {{ current.review.model }}</small></div></div>
+        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР · {{ current.review.is_demo ? 'ДЕМО-ФИКСТУРА' : 'Z.AI' }}</span><b>{{ current.review.summary || (current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован') }}</b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
+        <div v-if="current.review.is_demo" class="fixture-note">Эта карточка — неизменяемый демонстрационный пример. Новые сдачи проверяются реальной моделью Z.AI.</div>
+        <div v-if="current.review.ai_status === 'failed'" class="toast-error">Z.AI: {{ current.review.ai_error }}</div>
         <section class="attention-panel"><h3><span>!</span> Панель внимания</h3><p>Проверьте критерии с низкой уверенностью и отдельный AI-сигнал.</p></section>
         <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} решено</span></div>
           <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">

@@ -220,7 +220,7 @@ def test_create_edit_and_submit_assignment(methodist):
         f"/api/student/assignments/{body['id']}/submissions",
         json={"source_url": "https://github.com/demo/crt"}, headers=auth,
     )
-    assert submit.status_code == 201
+    assert submit.status_code == 202
 
 
 def test_registry_groups_published_assignments_with_non_submitters(methodist):
@@ -305,7 +305,7 @@ def test_auto_assign_applies_to_freshly_submitted_work(methodist):
         json={"source_url": "https://github.com/demo/fresh"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert submit.status_code == 201
+    assert submit.status_code == 202
     assert submit.json()["status"] == "assigned", "авто-режим назначает ревьюера сразу при сдаче"
 
     fresh_id = submit.json()["id"]

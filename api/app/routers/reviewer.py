@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,6 +29,12 @@ from ..security import require
 from ..serializers import iso, review_data, submission_data
 from ..services.mock_review import blitz_questions
 from ..services.status import overdue_risk, transition
+from ..services.ai_reviewer_client import (
+    AiReviewerClient,
+    AiReviewerError,
+    AiReviewerUnavailable,
+)
+from ..services.review_pipeline import fail_stale_reviews, is_stale, persist_call, run_review
 
 router = APIRouter(prefix="/reviewer", tags=["reviewer"])
 reviewer_guard = require(Role.REVIEWER)
@@ -76,6 +82,9 @@ def review_context(db: Session, submission_id: UUID, reviewer: User) -> tuple[Su
 
 @router.get("/queue")
 def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -> list[dict]:
+    # Планировщика нет: зависшие прогоны подметаются при чтении очереди, чтобы
+    # ревьюер видел failed с понятной причиной, а не вечное «Проверка выполняется…».
+    fail_stale_reviews(db)
     rows = db.execute(
         select(Submission, ReviewAssignment)
         .join(ReviewAssignment, ReviewAssignment.submission_id == Submission.id)
@@ -94,6 +103,8 @@ def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -
         data["explanation"] = assignment.explanation
         review = db.scalar(select(Review).where(Review.submission_id == submission.id))
         data["ai_status"] = review.ai_status if review else "failed"
+        data["is_demo"] = bool(review and review.raw_result.get("demo_data", False))
+        data["model"] = review.model if review else None
         result.append(data)
     return result
 
@@ -141,6 +152,9 @@ def review_screen(
     db: Session = Depends(get_db),
 ) -> dict:
     submission, review = review_context(db, submission_id, user)
+    # То же, что в очереди: иначе зависшая запись оставит экран в состоянии
+    # «Проверка выполняется…» с заблокированным перезапуском.
+    fail_stale_reviews(db)
     if submission.status == SubmissionStatus.ASSIGNED:
         transition(db, submission, SubmissionStatus.IN_REVIEW, user, "Ревьюер открыл работу")
         db.commit()
@@ -266,12 +280,63 @@ def rewrite_feedback(
     review = db.get(Review, review_id)
     if not review:
         raise HTTPException(404, "Ревью не найдено")
-    review_context(db, review.submission_id, user)
+    submission, review = review_context(db, review.submission_id, user)
+    decisions = [
+        {
+            "criterion": item.criterion_title,
+            "score": item.final_score if item.final_score is not None else item.ai_score,
+            "max_score": item.max_score,
+            "action": item.reviewer_action,
+            "comment": item.reviewer_comment or item.recommendation,
+        }
+        for item in review.items
+        if item.reviewer_action != ReviewerAction.REJECTED
+    ]
+    try:
+        response = AiReviewerClient().rewrite_feedback(
+            text=payload.text,
+            tone_of_voice=submission.assignment.course.tone_of_voice,
+            decisions=decisions,
+        )
+        suggestion = response.suggestion
+        metadata = response.metadata
+    except AiReviewerUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except AiReviewerError as exc:
+        raise HTTPException(502, f"AI reviewer не смог переформулировать feedback: {exc}") from exc
+    persist_call(db, review.id, "feedback_copilot", metadata)
+    db.commit()
     return {
         "original": payload.text,
-        "suggestion": f"Сильная сторона работы — последовательный ход экспериментов. {payload.text.strip()} Рекомендую учесть замечания перед следующей работой.",
-        "mock": True,
+        "suggestion": suggestion,
+        "provider": "z.ai",
+        "model": metadata.model,
     }
+
+
+@router.post("/reviews/{review_id}/rerun", status_code=202)
+def rerun_review(
+    review_id: UUID,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(reviewer_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    review = db.get(Review, review_id)
+    if not review:
+        raise HTTPException(404, "Ревью не найдено")
+    submission, review = review_context(db, review.submission_id, user)
+    if submission.status == SubmissionStatus.COMPLETED:
+        raise HTTPException(409, "Завершённое ревью нельзя перезапустить")
+    if any(item.reviewer_action != ReviewerAction.PENDING for item in review.items):
+        raise HTTPException(409, "Ревью с решениями человека нельзя перезапустить")
+    # Зависший прогон перезапустить можно: процесс, который его вёл, уже мёртв.
+    if review.ai_status == "running" and not is_stale(review):
+        raise HTTPException(409, "AI-ревью уже выполняется")
+    review.ai_status = "pending"
+    review.ai_error = None
+    db.commit()
+    background_tasks.add_task(run_review, review.id)
+    return {"review_id": str(review.id), "ai_status": review.ai_status}
 
 
 @router.post("/reviews/{review_id}/complete")

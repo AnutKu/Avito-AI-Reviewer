@@ -21,10 +21,20 @@ from .models import (
     SubmissionStatus,
     User,
 )
-from .services.mock_review import blitz_questions, fill_mock_review
+from .services.mock_review import blitz_questions, fill_demo_review
 
 
 def seed_demo(db: Session) -> None:
+    legacy_reviews = list(db.scalars(select(Review).where(Review.model == "mock/ai-review-v1")))
+    for review in legacy_reviews:
+        review.model = "demo-fixture/v1"
+        review.raw_result = {
+            **review.raw_result,
+            "mock": False,
+            "demo_data": True,
+        }
+    if legacy_reviews:
+        db.commit()
     if db.scalar(select(User.id).limit(1)):
         return
 
@@ -155,7 +165,7 @@ def seed_demo(db: Session) -> None:
         review = Review(submission_id=submission.id, rubric_version_id=rubric.id)
         db.add(review)
         db.flush()
-        fill_mock_review(db, review, quality)
+        fill_demo_review(db, review, quality)
 
         if state not in (SubmissionStatus.SUBMITTED, SubmissionStatus.PROPOSED):
             reviewer = reviewers[index % len(reviewers)]

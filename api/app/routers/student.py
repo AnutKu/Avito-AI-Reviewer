@@ -1,8 +1,7 @@
-import hashlib
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,7 +25,8 @@ from ..models import (
 from ..security import require
 from ..serializers import assignment_data, iso, review_data, submission_data
 from ..services.assignment import auto_distribute
-from ..services.mock_review import fill_mock_review
+from ..services.github import GithubSnapshotError, fetch_github_snapshot
+from ..services.review_pipeline import run_review
 from ..services.status import record_initial, transition
 
 router = APIRouter(
@@ -92,10 +92,11 @@ def assignment(
     return data
 
 
-@router.post("/assignments/{assignment_id}/submissions", status_code=201)
+@router.post("/assignments/{assignment_id}/submissions", status_code=202)
 def submit(
     assignment_id: UUID,
     payload: SubmissionCreate,
+    background_tasks: BackgroundTasks,
     user: User = Depends(student_guard),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -115,6 +116,10 @@ def submit(
     if existing:
         raise HTTPException(409, "Работа по этому заданию уже принята")
     source_url = str(payload.source_url)
+    try:
+        github_snapshot = fetch_github_snapshot(source_url)
+    except GithubSnapshotError as exc:
+        raise HTTPException(422, str(exc)) from exc
     submission = Submission(
         assignment_id=assignment.id,
         student_id=user.id,
@@ -128,13 +133,9 @@ def submit(
     db.add(
         Snapshot(
             submission_id=submission.id,
-            content=(
-                "# Снапшот демонстрационной работы\n\n"
-                f"Источник: {source_url}\n\n"
-                "Содержимое репозитория замокано до подключения GitHub-адаптера."
-            ),
-            content_hash=hashlib.sha256(source_url.encode()).hexdigest(),
-            parsed_facts={"runs": 22, "metrics": ["accuracy", "f1"], "seed": 42, "mock": True},
+            content=github_snapshot.content,
+            content_hash=github_snapshot.content_hash,
+            parsed_facts=github_snapshot.parsed_facts,
         )
     )
     review = Review(
@@ -143,13 +144,15 @@ def submit(
     )
     db.add(review)
     db.flush()
-    fill_mock_review(db, review)
-    transition(db, submission, SubmissionStatus.PROPOSED, comment="Мок-ревью готово, работа ждёт распределения")
+    transition(db, submission, SubmissionStatus.PROPOSED, comment="AI-ревью поставлено в очередь")
     if assignment.course.auto_assign:
         db.flush()
         auto_distribute(db, actor_id=None)
     db.commit()
-    return submission_data(submission)
+    background_tasks.add_task(run_review, review.id)
+    data = submission_data(submission)
+    data["review"] = {"id": str(review.id), "ai_status": review.ai_status}
+    return data
 
 
 def own_submission(db: Session, submission_id: UUID, user: User) -> Submission:

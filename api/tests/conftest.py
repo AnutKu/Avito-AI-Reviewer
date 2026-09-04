@@ -8,6 +8,7 @@
         python -m pytest
 """
 
+import hashlib
 import os
 
 import pytest
@@ -17,6 +18,28 @@ if _TEST_DB:
     # db.py читает DATABASE_URL при импорте — задаём до импорта приложения.
     os.environ["DATABASE_URL"] = _TEST_DB
     os.environ.setdefault("SEED_ON_START", "false")
+
+
+@pytest.fixture(autouse=True)
+def _offline_github(monkeypatch):
+    """Тесты не ходят в GitHub: submit получает детерминированный снапшот."""
+
+    if not _TEST_DB:
+        return
+
+    from app.routers import student
+    from app.services.github import GithubSnapshot
+
+    def _fake(source_url: str) -> GithubSnapshot:
+        return GithubSnapshot(
+            content=f"# demo snapshot\n\nИсточник: {source_url}\n",
+            content_hash="test-" + hashlib.sha256(source_url.encode()).hexdigest()[:16],
+            parsed_facts={"runs": 22, "metrics": ["accuracy", "f1"], "seed": 42, "mock": True},
+        )
+
+    monkeypatch.setattr(student, "fetch_github_snapshot", _fake)
+    # фоновый AI-прогон в тестах не нужен — он бы стучался в ai-reviewer и тормозил.
+    monkeypatch.setattr(student, "run_review", lambda review_id: None)
 
 
 @pytest.fixture
