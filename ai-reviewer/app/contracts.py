@@ -154,6 +154,107 @@ class DetectionResponse(StrictModel):
     metadata: ProviderMetadata
 
 
+BlitzQuestionType = Literal[
+    "explain_choice",
+    "what_if",
+    "change_solution",
+    "trace_output",
+]
+
+BLITZ_QUESTION_TYPES: dict[str, str] = {
+    "explain_choice": "почему выбрано именно это решение, а не очевидная альтернатива",
+    "what_if": "что изменится в результате, если поменять одно условие",
+    "change_solution": "как доработать решение под новое требование",
+    "trace_output": "что окажется в переменной или выводе на конкретном шаге",
+}
+
+assert set(BLITZ_QUESTION_TYPES) == set(BlitzQuestionType.__args__)
+
+
+class BlitzQuestionsRequest(StrictModel):
+    assignment: AssignmentInput
+    snapshot: SnapshotInput
+    count: int = Field(default=5, ge=1, le=8)
+    # Ключи признаков из детекции: вопросы имеет смысл целить в те места решения,
+    # где что-то наблюдалось. Пустой список — нормальный вход.
+    focus: list[str] = Field(default_factory=list, max_length=11)
+
+
+class BlitzQuestion(StrictModel):
+    """`expected_points` — материал ревьюера, студенту он не показывается.
+
+    Проекцию делает core api (routers/student.py), но подпись стоит и здесь:
+    поле выглядит безобидно ровно до того момента, когда его отдадут вместе с
+    вопросом, и опрос превратится в тест с ответами на обороте.
+    """
+
+    id: str = Field(min_length=1, max_length=16)
+    type: BlitzQuestionType
+    text: str = Field(min_length=10, max_length=600)
+    anchor: str = Field(min_length=1, max_length=255)
+    expected_points: list[str] = Field(min_length=1, max_length=4)
+
+
+class BlitzQuestionsResult(StrictModel):
+    questions: list[BlitzQuestion] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def unique_ids(self) -> "BlitzQuestionsResult":
+        ids = [item.id for item in self.questions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("question id must be unique")
+        return self
+
+
+class BlitzQuestionsResponse(StrictModel):
+    result: BlitzQuestionsResult
+    metadata: ProviderMetadata
+
+
+class AnswerInput(StrictModel):
+    question_id: str = Field(min_length=1, max_length=16)
+    text: str = Field(default="", max_length=20_000)
+
+
+class BlitzAnalysisRequest(StrictModel):
+    """Телеметрии здесь нет намеренно.
+
+    Поведение за клавиатурой и содержание ответа — разные свидетельства, и
+    смешивать их в одном промпте значит позволить одному подкрасить другое.
+    Телеметрию ревьюер видит отдельно и взвешивает сам.
+    """
+
+    assignment: AssignmentInput
+    questions: list[BlitzQuestion] = Field(min_length=1, max_length=8)
+    answers: list[AnswerInput] = Field(min_length=1, max_length=8)
+
+
+class AnswerAssessment(StrictModel):
+    question_id: str = Field(min_length=1, max_length=16)
+    verdict: Literal["consistent", "partial", "inconsistent", "empty"]
+    # Дословные фрагменты ответа студента. Непроверяемое основание отбрасывается.
+    grounds: list[str] = Field(default_factory=list, max_length=3)
+    note: str = Field(min_length=1, max_length=1500)
+
+
+class BlitzAnalysisResult(StrictModel):
+    assessments: list[AnswerAssessment] = Field(min_length=1, max_length=8)
+    summary: str = Field(min_length=1, max_length=2000)
+    limitations: str = Field(min_length=1, max_length=3000)
+
+    @model_validator(mode="after")
+    def unique_ids(self) -> "BlitzAnalysisResult":
+        ids = [item.question_id for item in self.assessments]
+        if len(ids) != len(set(ids)):
+            raise ValueError("question_id must be unique")
+        return self
+
+
+class BlitzAnalysisResponse(StrictModel):
+    result: BlitzAnalysisResult
+    metadata: ProviderMetadata
+
+
 class FeedbackRequest(StrictModel):
     text: str = Field(min_length=3, max_length=12000)
     tone_of_voice: dict = Field(default_factory=dict)

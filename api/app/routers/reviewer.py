@@ -12,8 +12,12 @@ from ..db import get_db
 from ..models import (
     AiDetection,
     AiSignal,
+    AiStatus,
+    BlitzEvent,
     BlitzSession,
     BlitzStatus,
+    FraudDecision,
+    FraudVerdict,
     Notification,
     Review,
     ReviewAssignment,
@@ -27,8 +31,8 @@ from ..models import (
     User,
 )
 from ..security import require
-from ..serializers import detection_data, iso, review_data, submission_data
-from ..services.mock_review import blitz_questions
+from ..serializers import blitz_data, detection_data, iso, review_data, submission_data
+from ..services import blitz_telemetry
 from ..services.status import overdue_risk, transition
 from ..services.ai_reviewer_client import (
     AiReviewerClient,
@@ -36,6 +40,7 @@ from ..services.ai_reviewer_client import (
     AiReviewerUnavailable,
 )
 from ..services.review_pipeline import (
+    expire_blitz_sessions,
     fail_stale_detections,
     fail_stale_reviews,
     is_stale,
@@ -59,8 +64,28 @@ class SignalDecisionPayload(BaseModel):
     decision: Literal["confirmed", "dismissed"]
 
 
+class BlitzSuggest(BaseModel):
+    count: int = Field(default=5, ge=1, le=8)
+
+
 class BlitzCreate(BaseModel):
-    questions: list[dict]
+    """Отправляются идентификаторы, а не тексты.
+
+    Раньше сюда приходил список вопросов целиком, и то, что увидит студент,
+    определял клиент. Теперь клиент выбирает из черновика, а формулировку берём
+    из базы: отправить можно только то, что было сгенерировано и сохранено.
+    """
+
+    session_id: UUID
+    question_ids: list[str] = Field(min_length=1, max_length=8)
+
+
+class FraudDecisionPayload(BaseModel):
+    verdict: Literal["no_signs", "tool_assisted", "misconduct", "inconclusive"]
+    # Обоснование обязательно: решение о недобросовестности человек принимает
+    # сам и объясняет сам. Пустое поле здесь превратило бы вердикт в кнопку.
+    rationale: str = Field(min_length=20)
+    blitz_id: UUID | None = None
 
 
 class CompleteReview(BaseModel):
@@ -95,6 +120,9 @@ def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -
     # ревьюер видел failed с понятной причиной, а не вечное «Проверка выполняется…».
     fail_stale_reviews(db)
     fail_stale_detections(db)
+    # По той же причине: опрос, переживший свой срок, иначе держит работу в
+    # «ожидает ответа» до конца времён и не даёт её завершить.
+    expire_blitz_sessions(db)
     rows = db.execute(
         select(Submission, ReviewAssignment)
         .join(ReviewAssignment, ReviewAssignment.submission_id == Submission.id)
@@ -130,13 +158,22 @@ def review_screen(
     # «Проверка выполняется…» с заблокированным перезапуском.
     fail_stale_reviews(db)
     fail_stale_detections(db)
+    expire_blitz_sessions(db)
     if submission.status == SubmissionStatus.ASSIGNED:
         transition(db, submission, SubmissionStatus.IN_REVIEW, user, "Ревьюер открыл работу")
         db.commit()
     snapshot = db.scalar(select(Snapshot).where(Snapshot.submission_id == submission.id))
-    blitz = db.scalar(
-        select(BlitzSession).where(BlitzSession.review_id == review.id).order_by(BlitzSession.created_at.desc())
+    sessions = list(
+        db.scalars(
+            select(BlitzSession)
+            .where(BlitzSession.review_id == review.id)
+            .order_by(BlitzSession.created_at.desc())
+        )
     )
+    # Черновик и отправленный опрос — разные вещи на экране: из первого ревьюер
+    # выбирает, второй уже живёт своей жизнью у студента.
+    draft = next((item for item in sessions if item.status == BlitzStatus.DRAFT), None)
+    active = next((item for item in sessions if item.status != BlitzStatus.DRAFT), None)
     detection = db.scalar(
         select(AiDetection)
         .where(AiDetection.review_id == review.id)
@@ -151,16 +188,41 @@ def review_screen(
             "fetched_at": iso(snapshot.fetched_at) if snapshot else None,
         },
         "review": review_data(review),
-        "blitz": {
-            "id": str(blitz.id),
-            "status": blitz.status,
-            "questions": blitz.questions,
-            "answers": blitz.answers,
-            "ai_analysis": blitz.ai_analysis,
-            "due_at": iso(blitz.due_at),
-        } if blitz else None,
-        "suggested_questions": blitz_questions() if settings.feature_blitz else [],
+        "blitz": blitz_data(active, session_telemetry(db, active)),
+        "blitz_draft": blitz_data(draft) if settings.feature_blitz else None,
+        "fraud_decisions": [
+            {
+                "verdict": row.verdict,
+                "rationale": row.rationale,
+                "decided_at": iso(row.decided_at),
+            }
+            for row in db.scalars(
+                select(FraudDecision)
+                .where(FraudDecision.review_id == review.id)
+                .order_by(FraudDecision.decided_at.desc())
+            )
+        ],
     }
+
+
+def session_telemetry(db: Session, session: BlitzSession | None) -> dict | None:
+    """Считается на чтении из событий, а не хранится сведённой.
+
+    Событие — факт, сводка — интерпретация: пороги мы наверняка ещё подвинем, и
+    подвинуть их на исторических сессиях можно, только если сводку не заморозили.
+    """
+
+    if not session or session.status == BlitzStatus.DRAFT:
+        return None
+    events = list(
+        db.scalars(select(BlitzEvent).where(BlitzEvent.session_id == session.id))
+    )
+    return blitz_telemetry.aggregate(
+        events=events,
+        answers=session.answers or [],
+        sent_at=session.sent_at,
+        answered_at=session.answered_at,
+    )
 
 
 @router.patch("/review-items/{item_id}")
@@ -207,6 +269,71 @@ def decide_signal(
     return {"ok": True}
 
 
+@router.post("/reviews/{review_id}/blitz/suggest", status_code=201)
+def suggest_blitz(
+    review_id: UUID,
+    payload: BlitzSuggest,
+    user: User = Depends(reviewer_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Генерирует черновик вопросов. Студент их пока не видит.
+
+    Синхронно, а не фоновой задачей: ревьюер нажал и ждёт результата на экране,
+    и отдавать ему «поставлено в очередь» здесь было бы хуже, чем подождать.
+    """
+
+    if not settings.feature_blitz:
+        raise HTTPException(404, "Раздел выключен")
+    review = db.get(Review, review_id)
+    if not review:
+        raise HTTPException(404, "Ревью не найдено")
+    submission, review = review_context(db, review.submission_id, user)
+    if submission.status != SubmissionStatus.IN_REVIEW:
+        raise HTTPException(409, "Вопросы можно подготовить только во время ревью")
+    snapshot = db.scalar(select(Snapshot).where(Snapshot.submission_id == submission.id))
+    if not snapshot:
+        raise HTTPException(409, "Снапшот решения не сохранён")
+    # Признаки из детекции — прицел, а не обвинение: вопрос по месту, где что-то
+    # наблюдалось, проверяет понимание лучше, чем вопрос по случайной ячейке.
+    detection = db.scalar(
+        select(AiDetection)
+        .where(AiDetection.review_id == review.id, AiDetection.status == AiStatus.READY)
+        .order_by(AiDetection.created_at.desc())
+    )
+    focus = [
+        item["key"]
+        for item in (detection.contributions if detection else [])
+        if item.get("direction", 0) > 0
+    ]
+    try:
+        response = AiReviewerClient().blitz_questions(
+            assignment=submission.assignment,
+            snapshot=snapshot,
+            count=payload.count,
+            focus=focus,
+        )
+    except AiReviewerUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except AiReviewerError as exc:
+        raise HTTPException(502, f"AI reviewer не смог составить вопросы: {exc}") from exc
+
+    for stale in db.scalars(
+        select(BlitzSession).where(
+            BlitzSession.review_id == review.id, BlitzSession.status == BlitzStatus.DRAFT
+        )
+    ):
+        db.delete(stale)
+    session = BlitzSession(
+        review_id=review.id,
+        status=BlitzStatus.DRAFT,
+        questions=[question.model_dump() for question in response.result.questions],
+    )
+    db.add(session)
+    persist_call(db, review.id, "blitz_questions", response.metadata)
+    db.commit()
+    return {"id": str(session.id), "status": session.status, "questions": session.questions}
+
+
 @router.post("/reviews/{review_id}/blitz", status_code=201)
 def send_blitz(
     review_id: UUID,
@@ -222,17 +349,19 @@ def send_blitz(
     submission, _ = review_context(db, review.submission_id, user)
     if submission.status != SubmissionStatus.IN_REVIEW:
         raise HTTPException(409, "Дополнительные вопросы можно отправить только во время ревью")
-    selected = [question for question in payload.questions if question.get("selected", True)]
-    if not selected:
-        raise HTTPException(422, "Выберите хотя бы один вопрос")
-    session = BlitzSession(
-        review_id=review.id,
-        status=BlitzStatus.SENT,
-        questions=selected,
-        sent_at=datetime.now(UTC),
-        due_at=datetime.now(UTC) + timedelta(hours=48),
-    )
-    db.add(session)
+    session = db.get(BlitzSession, payload.session_id)
+    if not session or session.review_id != review.id or session.status != BlitzStatus.DRAFT:
+        raise HTTPException(404, "Черновик вопросов не найден")
+    by_id = {question["id"]: question for question in session.questions}
+    unknown = [key for key in payload.question_ids if key not in by_id]
+    if unknown:
+        raise HTTPException(422, f"Вопросы отсутствуют в черновике: {', '.join(unknown)}")
+    # Черновик становится отправленным опросом, а не порождает второй: у события
+    # «эти вопросы задали студенту» должна быть одна запись.
+    session.questions = [by_id[key] for key in payload.question_ids]
+    session.status = BlitzStatus.SENT
+    session.sent_at = datetime.now(UTC)
+    session.due_at = session.sent_at + timedelta(hours=48)
     transition(db, submission, SubmissionStatus.BLITZ_SENT, user, "Ревьюер отправил дополнительные вопросы")
     db.add(
         Notification(
@@ -249,6 +378,61 @@ def send_blitz(
             signal.decided_at = datetime.now(UTC)
     db.commit()
     return {"id": str(session.id), "status": session.status}
+
+
+@router.post("/reviews/{review_id}/fraud-decision", status_code=201)
+def fraud_decision(
+    review_id: UUID,
+    payload: FraudDecisionPayload,
+    user: User = Depends(reviewer_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Финальное решение человека о недобросовестности.
+
+    Балл не трогает — ни при каком вердикте. Оценка складывается из решений по
+    критериям, и `misconduct` здесь не должен уметь её изменить: иначе сигнал,
+    который «на балл не влияет», начинает влиять через заднюю дверь.
+    Пересмотр добавляет строку, а не переписывает старую.
+    """
+
+    if not settings.feature_ai_detection:
+        raise HTTPException(404, "Раздел выключен")
+    review = db.get(Review, review_id)
+    if not review:
+        raise HTTPException(404, "Ревью не найдено")
+    review_context(db, review.submission_id, user)
+    blitz = db.get(BlitzSession, payload.blitz_id) if payload.blitz_id else None
+    if payload.blitz_id and (not blitz or blitz.review_id != review.id):
+        raise HTTPException(404, "Опрос не найден")
+    detection = db.scalar(
+        select(AiDetection)
+        .where(AiDetection.review_id == review.id, AiDetection.status == AiStatus.READY)
+        .order_by(AiDetection.created_at.desc())
+    )
+    decision = FraudDecision(
+        review_id=review.id,
+        detection_id=detection.id if detection else None,
+        blitz_id=blitz.id if blitz else None,
+        verdict=FraudVerdict(payload.verdict),
+        rationale=payload.rationale,
+        decided_by=user.id,
+    )
+    db.add(decision)
+    # Сигнал закрывается решением человека: держать его «на рассмотрении» после
+    # вынесенного вердикта незачем.
+    for signal in review.signals:
+        if signal.kind == "ai_use" and signal.reviewer_decision in (
+            SignalDecision.PENDING,
+            SignalDecision.BLITZ,
+        ):
+            signal.reviewer_decision = (
+                SignalDecision.CONFIRMED
+                if payload.verdict == FraudVerdict.MISCONDUCT
+                else SignalDecision.DISMISSED
+            )
+            signal.decided_at = datetime.now(UTC)
+    db.commit()
+    return {"id": str(decision.id), "verdict": decision.verdict, "decided_at": iso(decision.decided_at)}
 
 
 @router.post("/reviews/{review_id}/rewrite-feedback")

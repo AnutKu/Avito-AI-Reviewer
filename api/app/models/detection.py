@@ -1,4 +1,4 @@
-"""Таблицы модуля детекции.
+"""Таблицы модуля детекции и блиц-опроса.
 
 Отдельным модулем рядом с core: кабинет про них не знает, фича добавляет своё
 и core-схему не меняет.
@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Float, ForeignKey, String, Text
+from sqlalchemy import Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,37 @@ class AiDetection(Base):
     error: Mapped[str | None] = mapped_column(Text)
     raw_result: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = now_col()
+
+
+class BlitzEvent(Base):
+    """Одно наблюдение с устройства студента во время ответа на блиц.
+
+    Что здесь есть и чего нет — решение, а не недоделка:
+
+    * `offset_ms` — смещение от открытия формы, а не абсолютное время. Часы на
+      устройстве студента нам не подчиняются, а длительности от их сдвига не
+      зависят. Сверка с сервером идёт по одному числу — общей длительности.
+    * `size` — только ДЛИНА вставленного или набранного, никогда содержимое.
+      Записать вставленный текст значило бы читать буфер обмена студента: там
+      бывает всё что угодно, и к проверке домашней работы оно отношения не имеет.
+
+    Данные пришли с клиента и подделываются кем угодно, кто откроет консоль.
+    Это вспомогательное наблюдение для человека, а не доказательство, и
+    интерфейс обязан говорить об этом прямо.
+    """
+
+    __tablename__ = "blitz_events"
+
+    id: Mapped[uuid.UUID] = pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("blitz_sessions.id", ondelete="CASCADE"), index=True
+    )
+    # None у событий уровня формы: уход с вкладки не привязан к вопросу.
+    question_id: Mapped[str | None] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(24))
+    offset_ms: Mapped[int] = mapped_column(Integer, default=0)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    received_at: Mapped[datetime] = now_col()
 
 
 class FraudDecision(Base):

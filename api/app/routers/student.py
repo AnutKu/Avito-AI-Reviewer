@@ -1,14 +1,16 @@
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import (
     Assignment,
+    BlitzEvent,
     BlitzSession,
     BlitzStatus,
     Enrollment,
@@ -23,10 +25,28 @@ from ..models import (
     User,
 )
 from ..security import require
-from ..serializers import assignment_data, iso, review_data, submission_data
+from ..serializers import (
+    assignment_data,
+    iso,
+    review_data,
+    student_question_data,
+    submission_data,
+)
 from ..services.github import GithubSnapshotError, fetch_github_snapshot
 from ..services.status import record_initial, transition
-from ..services.review_pipeline import run_detection, run_review
+from ..services.review_pipeline import run_blitz_analysis, run_detection, run_review
+
+# Показывается студенту до начала ответа, дословно. Скрытый сбор поведения —
+# это слежка; объявленный — условие проверки, на которое человек соглашается,
+# открывая форму. Разница не косметическая, и текст должен жить рядом с кодом,
+# который собирает данные, чтобы они не разъехались.
+TELEMETRY_NOTICE = (
+    "Пока вы отвечаете, форма фиксирует, сколько времени занял каждый ответ, "
+    "переключались ли вы на другое окно и вставляли ли текст из буфера обмена. "
+    "Содержимое буфера обмена и других вкладок не читается — только длина "
+    "вставки. Эти данные видит ревьюер вместе с вашими ответами; сами по себе "
+    "они ничего не решают."
+)
 
 router = APIRouter(
     prefix="/student",
@@ -40,8 +60,30 @@ class SubmissionCreate(BaseModel):
     source_url: HttpUrl
 
 
+class TelemetryEvent(BaseModel):
+    """Одно наблюдение с устройства. Содержимого здесь нет и быть не должно."""
+
+    kind: Literal[
+        "blur",
+        "focus",
+        "hidden",
+        "visible",
+        "paste",
+        "drop",
+        "input_batch",
+        "question_focus",
+        "question_blur",
+    ]
+    question_id: str | None = Field(default=None, max_length=16)
+    offset_ms: int = Field(ge=0, le=30 * 24 * 3600 * 1000)
+    size: int = Field(default=0, ge=0, le=1_000_000)
+
+
 class BlitzAnswers(BaseModel):
     answers: list[dict]
+    # Потолок на случай зациклившегося клиента: батч ввода раз в секунду за
+    # 48 часов даёт меньше, чем этот предел.
+    events: list[TelemetryEvent] = Field(default_factory=list, max_length=5000)
 
 
 @router.get("/assignments")
@@ -191,9 +233,13 @@ def blitz(user: User = Depends(student_guard), db: Session = Depends(get_db)) ->
         {
             "id": str(session.id),
             "assignment": submission.assignment.title,
-            "questions": session.questions,
+            # Проекция, а не сырые вопросы: в них лежит expected_points —
+            # то, что должен показать понимающий ответ. Отдать его вместе с
+            # вопросом значит выдать опрос с ответами на обороте.
+            "questions": [student_question_data(item) for item in session.questions],
             "sent_at": iso(session.sent_at),
             "due_at": iso(session.due_at),
+            "telemetry_notice": TELEMETRY_NOTICE,
         }
         for session, submission in sessions
     ]
@@ -203,6 +249,7 @@ def blitz(user: User = Depends(student_guard), db: Session = Depends(get_db)) ->
 def answer_blitz(
     session_id: UUID,
     payload: BlitzAnswers,
+    background_tasks: BackgroundTasks,
     user: User = Depends(student_guard),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -213,14 +260,27 @@ def answer_blitz(
         raise HTTPException(404, "Опрос не найден")
     if session.status != BlitzStatus.SENT:
         raise HTTPException(409, "Ответ на этот опрос уже принят")
-    session.answers = payload.answers
+    asked = {question["id"] for question in session.questions}
+    session.answers = [
+        {"question_id": str(item.get("question_id", "")), "text": str(item.get("text") or "")}
+        for item in payload.answers
+        if str(item.get("question_id", "")) in asked
+    ]
     session.status = BlitzStatus.ANSWERED
     session.answered_at = datetime.now(UTC)
-    session.ai_analysis = {
-        "summary": "Ответ показывает понимание выбора модели; итоговое решение остаётся за ревьюером.",
-        "confidence": "medium",
-        "mock": True,
-    }
+    # Разбор ставится фоновой задачей: он идёт в модель, и держать студента на
+    # спиннере ради результата, который смотрит ревьюер, незачем.
+    session.ai_analysis = {"status": "pending"}
+    for event in payload.events:
+        db.add(
+            BlitzEvent(
+                session_id=session.id,
+                question_id=event.question_id if event.question_id in asked else None,
+                kind=event.kind,
+                offset_ms=event.offset_ms,
+                size=event.size,
+            )
+        )
     transition(db, submission, SubmissionStatus.BLITZ_ANSWERED, user, "Студент ответил на блиц")
     assignment = db.scalar(
         select(ReviewAssignment).where(
@@ -238,4 +298,5 @@ def answer_blitz(
             )
         )
     db.commit()
+    background_tasks.add_task(run_blitz_analysis, session.id)
     return {"ok": True, "status": session.status}

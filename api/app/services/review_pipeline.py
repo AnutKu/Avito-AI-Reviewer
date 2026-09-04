@@ -28,6 +28,8 @@ from ..models import (
     AiSignal,
     AiStatus,
     Assignment,
+    BlitzSession,
+    BlitzStatus,
     DetectionCategory,
     LlmCall,
     Review,
@@ -44,6 +46,7 @@ from .ai_reviewer_client import (
     AiReviewerClient,
     AiReviewerError,
     AiReviewerNotConfigured,
+    BlitzAnalysisResponse,
     DetectionResponse,
     ProviderMetadata,
     ReviewResponse,
@@ -320,6 +323,93 @@ def run_detection(review_id: UUID) -> None:
             if detection:
                 detection.status = AiStatus.FAILED
                 detection.error = str(exc)[:2000]
+                db.commit()
+
+
+def expire_blitz_sessions(db: Session) -> int:
+    """Отправленный опрос, переживший свой срок, закрывается.
+
+    Подметается при чтении очереди, как и зависшие прогоны: планировщика нет, а
+    висящий «ожидает ответа» блокирует ревьюеру завершение работы навсегда.
+    """
+
+    now = datetime.now(UTC)
+    expired = [
+        session
+        for session in db.scalars(
+            select(BlitzSession).where(BlitzSession.status == BlitzStatus.SENT)
+        )
+        if session.due_at and session.due_at < now
+    ]
+    for session in expired:
+        session.status = BlitzStatus.EXPIRED
+    if expired:
+        db.commit()
+    return len(expired)
+
+
+def _blitz_analysis_with_retries(
+    *, assignment: Assignment, questions: list[dict], answers: list[dict]
+) -> BlitzAnalysisResponse:
+    return _with_retries(
+        lambda: AiReviewerClient().blitz_analysis(
+            assignment=assignment, questions=questions, answers=answers
+        )
+    )
+
+
+def run_blitz_analysis(session_id: UUID) -> None:
+    """Background task entry point. Ставится после ответа студента.
+
+    Телеметрия в разбор НЕ передаётся: как студент себя вёл и что он написал —
+    разные свидетельства, и модель не должна подкрашивать одно другим.
+    Ревьюер видит их рядом и взвешивает сам.
+    """
+
+    if not settings.feature_blitz:
+        return
+    with SessionLocal() as db:
+        session = db.get(BlitzSession, session_id)
+        if not session or not session.questions:
+            return
+        session.ai_analysis = {
+            "status": AiStatus.RUNNING,
+            "started_at": datetime.now(UTC).isoformat(),
+        }
+        db.commit()
+
+        try:
+            review = db.get(Review, session.review_id)
+            submission = db.get(Submission, review.submission_id)
+            assignment = db.get(Assignment, submission.assignment_id)
+            response = _blitz_analysis_with_retries(
+                assignment=assignment,
+                questions=session.questions,
+                answers=[
+                    {
+                        "question_id": str(item.get("question_id", "")),
+                        "text": str(item.get("text") or ""),
+                    }
+                    for item in session.answers
+                ],
+            )
+            session.ai_analysis = {
+                "status": AiStatus.READY,
+                "assessments": [item.model_dump() for item in response.result.assessments],
+                "summary": response.result.summary,
+                "limitations": response.result.limitations,
+                "model": response.metadata.model,
+            }
+            _record_call(db, review.id, "blitz_analysis", response.metadata)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            session = db.get(BlitzSession, session_id)
+            if session:
+                session.ai_analysis = {
+                    "status": AiStatus.FAILED,
+                    "error": str(exc)[:2000],
+                }
                 db.commit()
 
 

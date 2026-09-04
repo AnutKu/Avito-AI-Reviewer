@@ -16,7 +16,7 @@ from .core import (
     Submission,
     User,
 )
-from .detection import AiDetection, FraudDecision
+from .detection import AiDetection, BlitzEvent, FraudDecision
 from .enums import (
     AiStatus,
     BlitzStatus,
@@ -39,6 +39,7 @@ __all__ = [
     "AiStatus",
     "Assignment",
     "Base",
+    "BlitzEvent",
     "BlitzSession",
     "BlitzStatus",
     "Confidence",

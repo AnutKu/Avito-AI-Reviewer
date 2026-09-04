@@ -144,3 +144,30 @@ h1, h2, h3, p { margin-top: 0; }
 .detection-panel details { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; color: var(--muted); font-size: 8px; }
 .detection-panel details p { margin: 8px 0; line-height: 1.55; }
 .detection-panel .attention-panel h3 span { background: var(--blue); }
+
+/* Блиц-опрос: черновик вопросов, ответы студента и наблюдения с его устройства.
+   Телеметрия визуально приглушена намеренно — это вспомогательное наблюдение
+   из недоверенного источника, а не улика, и выглядеть уликой она не должна. */
+.blitz-generate { display: flex; align-items: flex-end; gap: 9px; margin-bottom: 10px; }
+.blitz-generate label { display: grid; gap: 3px; color: var(--muted); font-size: 7.5px; }
+.blitz-generate input { width: 62px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 10px; }
+.question-check .expected { display: block; color: #5b5d68; background: #f7f7f9; border-radius: 6px; padding: 5px 7px; margin-top: 4px; font-size: 7.5px; font-style: normal; line-height: 1.5; }
+.muted.small { font-size: 7.5px; margin: 6px 0 10px; }
+.blitz-answer { border-top: 1px solid var(--line); padding: 10px 0; }
+.blitz-answer header { display: flex; justify-content: space-between; align-items: flex-start; gap: 9px; }
+.blitz-answer header b { font-size: 9px; line-height: 1.45; }
+.blitz-answer blockquote { margin: 7px 0 0; padding: 7px 9px; border-left: 2px solid var(--line); background: #f7f7f9; border-radius: 0 6px 6px 0; font-size: 8.5px; line-height: 1.6; white-space: pre-wrap; }
+.blitz-answer p.muted { font-size: 8px; line-height: 1.55; margin: 6px 0 0; }
+.telemetry-row { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; color: var(--muted); font-size: 7.5px; font-variant-numeric: tabular-nums; }
+.telemetry-flag { display: inline-block; color: #8c6411; background: #fffaf0; border: 1px solid #f4dda2; border-radius: 5px; padding: 2px 5px; font-size: 7px; font-weight: 700; }
+.telemetry-note { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; color: var(--muted); font-size: 7.5px; line-height: 1.6; }
+.telemetry-note .telemetry-flag { margin: 4px 4px 0 0; }
+.telemetry-notice { margin: 8px 0 4px; color: var(--muted); font-size: 11px; }
+.telemetry-notice summary { cursor: pointer; }
+.telemetry-notice p { margin: 7px 0 0; line-height: 1.6; }
+.fraud-panel .fraud-actions { display: grid; gap: 5px; margin: 9px 0; }
+.fraud-option { display: flex; align-items: center; gap: 6px; font-size: 9px; }
+.fraud-panel textarea { width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 9px; line-height: 1.55; resize: vertical; }
+.fraud-panel .decision-done.block { display: block; margin-bottom: 8px; }
+.fraud-panel .decision-done.block small { display: block; color: var(--muted); font-size: 7.5px; margin-top: 2px; }
+.fraud-panel .decision-done.block p { margin: 5px 0 0; line-height: 1.55; }

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, formatDate } from '../../shared/api'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
@@ -40,16 +40,69 @@ async function submit() {
   } catch (e) { error.value = e.message }
 }
 
+// Сбор поведения при ответе на блиц. Объявлен студенту в telemetry_notice —
+// скрытым он не бывает. Наружу уходят вид события, вопрос, смещение от открытия
+// формы и ДЛИНА вставленного или набранного: ни текста вставки, ни содержимого
+// буфера обмена здесь нет и появиться не должно.
+const events = ref({})
+const typed = {}
+let openedAt = 0
+let flushTimer = null
+
+function record(sessionId, kind, questionId = null, size = 0) {
+  if (!openedAt) return
+  const bucket = events.value[sessionId] || (events.value[sessionId] = [])
+  // Потолок совпадает с серверным: заклинивший обработчик не должен уметь
+  // отправить мегабайт событий.
+  if (bucket.length >= 5000) return
+  bucket.push({ kind, question_id: questionId, offset_ms: Date.now() - openedAt, size })
+}
+
+function recordEverywhere(kind) {
+  blitz.value.forEach(session => record(session.id, kind))
+}
+
+// Alt-Tab в другое приложение обычно даёт только blur, переключение вкладки —
+// только visibilitychange. Слушаем оба и схлопываем на сервере, иначе половина
+// уходов просто не наблюдается.
+const onBlur = () => recordEverywhere('blur')
+const onFocus = () => recordEverywhere('focus')
+const onVisibility = () => recordEverywhere(document.hidden ? 'hidden' : 'visible')
+
+function onBeforeInput(session, question, event) {
+  // Вставка и перетаскивание считаются отдельно — иначе один и тот же текст
+  // попал бы и в набранное, и во вставленное.
+  if (event.inputType && (event.inputType.startsWith('insertFromPaste') || event.inputType.startsWith('insertFromDrop'))) return
+  const key = `${session.id}:${question.id}`
+  typed[key] = (typed[key] || 0) + (event.data ? event.data.length : 0)
+}
+
+function flushTyping() {
+  Object.entries(typed).forEach(([key, size]) => {
+    if (!size) return
+    const [sessionId, questionId] = key.split(':')
+    record(sessionId, 'input_batch', questionId, size)
+    typed[key] = 0
+  })
+}
+
 async function loadBlitz() {
-  try { blitz.value = await api('/student/blitz') }
-  catch (e) { error.value = e.message }
+  try {
+    blitz.value = await api('/student/blitz')
+    openedAt = Date.now()
+    events.value = {}
+  } catch (e) { error.value = e.message }
 }
 
 async function sendAnswers(session) {
   const payload = session.questions.map(q => ({ question_id: q.id, text: answers.value[q.id] || '' }))
   if (payload.some(x => !x.text.trim())) { error.value = 'Ответьте на все вопросы'; return }
+  flushTyping()
   try {
-    await api(`/student/blitz/${session.id}/answer`, { method: 'POST', body: JSON.stringify({ answers: payload }) })
+    await api(`/student/blitz/${session.id}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ answers: payload, events: events.value[session.id] || [] }),
+    })
     await loadBlitz()
   } catch (e) { error.value = e.message }
 }
@@ -59,7 +112,20 @@ watch(() => props.active, value => {
   if (value === 'student-assignments') { mode.value = 'list'; loadAssignments() }
   if (value === 'student-blitz') loadBlitz()
 })
-onMounted(() => props.active === 'student-blitz' ? loadBlitz() : loadAssignments())
+onMounted(() => {
+  window.addEventListener('blur', onBlur)
+  window.addEventListener('focus', onFocus)
+  document.addEventListener('visibilitychange', onVisibility)
+  flushTimer = setInterval(flushTyping, 1000)
+  return props.active === 'student-blitz' ? loadBlitz() : loadAssignments()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('blur', onBlur)
+  window.removeEventListener('focus', onFocus)
+  document.removeEventListener('visibilitychange', onVisibility)
+  clearInterval(flushTimer)
+})
 </script>
 
 <template>
@@ -98,7 +164,25 @@ onMounted(() => props.active === 'student-blitz' ? loadBlitz() : loadAssignments
   <section v-else-if="active === 'student-blitz'">
     <div class="page-heading"><div><span class="eyebrow">МОЁ ОБУЧЕНИЕ</span><h1>Дополнительные вопросы</h1><p>Вопросы помогают уточнить детали вашей работы и не влияют на оценку автоматически</p></div></div>
     <div v-if="!blitz.length" class="empty-state"><span>✓</span><h2>Сейчас вопросов нет</h2><p>Если ревьюеру понадобится уточнение, оно появится здесь.</p></div>
-    <article v-for="session in blitz" :key="session.id" class="card blitz-card"><div class="blitz-head"><div><span class="eyebrow">{{ session.assignment }}</span><h2>Дополнительные вопросы по работе</h2></div><span class="deadline-chip">До {{ formatDate(session.due_at, true) }}</span></div><p class="neutral-note">Это обычная часть проверки: ответьте своими словами, опираясь на решение.</p><label v-for="(question, index) in session.questions" :key="question.id" class="question-field"><b>{{ index + 1 }}. {{ question.text }}</b><textarea v-model="answers[question.id]" rows="3" placeholder="Ваш ответ" /></label><button class="primary" @click="sendAnswers(session)">Отправить ответы</button></article>
+    <article v-for="session in blitz" :key="session.id" class="card blitz-card">
+      <div class="blitz-head"><div><span class="eyebrow">{{ session.assignment }}</span><h2>Дополнительные вопросы по работе</h2></div><span class="deadline-chip">До {{ formatDate(session.due_at, true) }}</span></div>
+      <p class="neutral-note">Это обычная часть проверки: ответьте своими словами, опираясь на решение.</p>
+      <details class="telemetry-notice"><summary>Что фиксируется, пока вы отвечаете</summary><p>{{ session.telemetry_notice }}</p></details>
+      <label v-for="(question, index) in session.questions" :key="question.id" class="question-field">
+        <b>{{ index + 1 }}. {{ question.text }}</b>
+        <textarea
+          v-model="answers[question.id]"
+          rows="3"
+          placeholder="Ваш ответ"
+          @focus="record(session.id, 'question_focus', question.id)"
+          @blur="record(session.id, 'question_blur', question.id)"
+          @beforeinput="onBeforeInput(session, question, $event)"
+          @paste="record(session.id, 'paste', question.id, ($event.clipboardData && $event.clipboardData.getData('text') || '').length)"
+          @drop="record(session.id, 'drop', question.id, ($event.dataTransfer && $event.dataTransfer.getData('text') || '').length)"
+        />
+      </label>
+      <button class="primary" @click="sendAnswers(session)">Отправить ответы</button>
+    </article>
     <p v-if="error" class="form-error floating">{{ error }}</p>
   </section>
 </template>

@@ -2,7 +2,16 @@ from datetime import datetime
 from typing import Any
 
 from .config import settings
-from .models import AiDetection, AiSignal, Assignment, Review, ReviewItem, Submission
+from .models import (
+    AiDetection,
+    AiSignal,
+    Assignment,
+    BlitzSession,
+    Review,
+    ReviewItem,
+    Submission,
+)
+from .services.blitz_telemetry import FLAG_TITLES
 
 
 def iso(value: datetime | None) -> str | None:
@@ -94,6 +103,41 @@ def detection_data(detection: AiDetection | None) -> dict | None:
         "reportable": reportable,
         "blitz_threshold": settings.detection_blitz_threshold,
         "created_at": iso(detection.created_at),
+    }
+
+
+# Поля вопроса, которые видит студент. Список закрытый и перечислен явно:
+# `expected_points` — это ответы на обороте, и утечь они могут ровно одним
+# способом — если вопрос отдать целиком.
+STUDENT_QUESTION_FIELDS = ("id", "type", "text")
+
+
+def student_question_data(question: dict) -> dict:
+    """Проекция вопроса для студента.
+
+    Белый список, а не удаление лишнего: при удалении новое поле в контракте
+    по умолчанию утекает, при белом списке — по умолчанию нет.
+    """
+
+    return {field: question.get(field, "") for field in STUDENT_QUESTION_FIELDS}
+
+
+def blitz_data(session: BlitzSession | None, telemetry: dict | None = None) -> dict | None:
+    """Полный вид опроса — только для ревьюера: здесь есть expected_points."""
+
+    if not session:
+        return None
+    return {
+        "id": str(session.id),
+        "status": session.status,
+        "questions": session.questions,
+        "answers": session.answers,
+        "ai_analysis": session.ai_analysis,
+        "telemetry": telemetry,
+        "telemetry_titles": FLAG_TITLES,
+        "sent_at": iso(session.sent_at),
+        "due_at": iso(session.due_at),
+        "answered_at": iso(session.answered_at),
     }
 
 

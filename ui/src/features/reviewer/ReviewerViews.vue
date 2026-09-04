@@ -24,6 +24,11 @@ async function openReview(id) {
     current.value = await api(`/reviewer/submissions/${id}/review`)
     feedback.value = current.value.review.draft_feedback
     current.value.review.items.forEach(item => { item.editScore = item.final_score ?? item.ai_score; item.editComment = item.reviewer_comment })
+    // Черновик мог остаться с прошлого захода: без этого он бы показался с
+    // пустыми галочками, и «Отправить» ругалось бы на пустой выбор.
+    picked.value = Object.fromEntries((current.value.blitz_draft?.questions || []).map(q => [q.id, true]))
+    fraudVerdict.value = ''
+    fraudRationale.value = ''
     emit('navigate', 'reviewer-review')
   } catch (e) { error.value = e.message }
 }
@@ -93,12 +98,82 @@ async function rerunDetection() {
   } catch (e) { error.value = e.message }
 }
 
-async function sendBlitz() {
+const QUESTION_TYPES = {
+  explain_choice: 'обоснование выбора',
+  what_if: 'что изменится, если',
+  change_solution: 'доработка решения',
+  trace_output: 'что окажется в выводе',
+}
+
+const ANSWER_VERDICTS = {
+  consistent: 'Согласуется с решением',
+  partial: 'Частично, поверхностно',
+  inconsistent: 'Расходится с решением',
+  empty: 'Ответа нет',
+}
+
+const FRAUD_VERDICTS = {
+  no_signs: 'Признаков нет',
+  tool_assisted: 'AI как инструмент — допустимо',
+  misconduct: 'Недобросовестность',
+  inconclusive: 'Данных недостаточно',
+}
+
+const blitzCount = ref(5)
+const picked = ref({})
+const busyBlitz = ref(false)
+const fraudVerdict = ref('')
+const fraudRationale = ref('')
+
+function seconds(ms) { return Math.round((ms || 0) / 100) / 10 }
+
+function answerText(questionId) {
+  const found = (current.value.blitz?.answers || []).find(a => a.question_id === questionId)
+  return found ? found.text : ''
+}
+
+function assessmentFor(questionId) {
+  return (current.value.blitz?.ai_analysis?.assessments || []).find(a => a.question_id === questionId)
+}
+
+function statsFor(questionId) {
+  return (current.value.blitz?.telemetry?.questions || []).find(q => q.question_id === questionId)
+}
+
+async function suggestBlitz() {
+  busyBlitz.value = true
   try {
-    const questions = current.value.suggested_questions
-    await api(`/reviewer/reviews/${current.value.review.id}/blitz`, { method: 'POST', body: JSON.stringify({ questions }) })
+    const draft = await api(`/reviewer/reviews/${current.value.review.id}/blitz/suggest`, { method: 'POST', body: JSON.stringify({ count: Number(blitzCount.value) }) })
+    current.value.blitz_draft = { ...draft, telemetry: null }
+    picked.value = Object.fromEntries(draft.questions.map(q => [q.id, true]))
+    notice.value = `Z.AI составил вопросы по этой работе: ${draft.questions.length}`
+  } catch (e) { error.value = e.message }
+  finally { busyBlitz.value = false }
+}
+
+async function sendBlitz() {
+  const questionIds = current.value.blitz_draft.questions.map(q => q.id).filter(id => picked.value[id])
+  if (!questionIds.length) { error.value = 'Выберите хотя бы один вопрос'; return }
+  try {
+    await api(`/reviewer/reviews/${current.value.review.id}/blitz`, {
+      method: 'POST',
+      body: JSON.stringify({ session_id: current.value.blitz_draft.id, question_ids: questionIds }),
+    })
     notice.value = 'Вопросы отправлены студенту на 48 часов'
-    current.value.submission.status = 'blitz_sent'
+    current.value = await api(`/reviewer/submissions/${current.value.submission.id}/review`)
+  } catch (e) { error.value = e.message }
+}
+
+async function saveFraudDecision() {
+  try {
+    await api(`/reviewer/reviews/${current.value.review.id}/fraud-decision`, {
+      method: 'POST',
+      body: JSON.stringify({ verdict: fraudVerdict.value, rationale: fraudRationale.value, blitz_id: current.value.blitz?.id || null }),
+    })
+    notice.value = 'Решение зафиксировано. На балл оно не влияет.'
+    fraudRationale.value = ''
+    fraudVerdict.value = ''
+    current.value = await api(`/reviewer/submissions/${current.value.submission.id}/review`)
   } catch (e) { error.value = e.message }
 }
 
@@ -186,7 +261,72 @@ onMounted(loadQueue)
           </article>
         </section>
         <section class="review-section"><div class="section-title"><h2>AI-сигнал</h2><span>Не влияет на балл</span></div><article v-for="signal in current.review.signals" :key="signal.id" class="signal-card"><header><span class="signal-icon">⌁</span><div><small>{{ signal.kind === 'ai_use' ? 'ВОЗМОЖНОЕ ИСПОЛЬЗОВАНИЕ AI' : 'РИСК ПОНИМАНИЯ' }}</small><h3>{{ signal.summary }}</h3></div><span class="confidence" :class="signal.level">{{ signal.level }}</span></header><ul><li v-for="ground in signal.grounds" :key="ground">{{ ground }}</li></ul><details><summary>Ограничения метода</summary><p>{{ signal.limitations }}</p></details><div v-if="signal.reviewer_decision === 'pending'" class="decision-actions"><button class="accept" @click="decideSignal(signal, 'confirmed')">Подтвердить сигнал</button><button @click="decideSignal(signal, 'dismissed')">Отклонить</button></div><div v-else class="decision-done">Решение сохранено: {{ signal.reviewer_decision }}</div></article></section>
-        <section v-if="current.suggested_questions.length && current.submission.status === 'in_review'" class="review-section"><div class="section-title"><h2>Дополнительные вопросы</h2><span>До 48 часов</span></div><p class="muted">Выберите вопросы — студент не увидит упоминаний AI-сигнала.</p><label v-for="question in current.suggested_questions" :key="question.id" class="question-check"><input v-model="question.selected" type="checkbox" /><span><b>{{ question.text }}</b><small>{{ question.type }}</small></span></label><button class="secondary full" @click="sendBlitz">Отправить выбранные вопросы</button></section>
+        <section v-if="current.submission.status === 'in_review'" class="review-section">
+          <div class="section-title"><h2>Дополнительные вопросы</h2><span>До 48 часов на ответ</span></div>
+          <p class="muted">Вопросы составляются по этому решению — на них нельзя ответить, не открыв работу. Студент не увидит упоминаний AI-сигнала.</p>
+          <div class="blitz-generate">
+            <label>Сколько вопросов<input v-model="blitzCount" type="number" min="1" max="8" /></label>
+            <button class="secondary" :disabled="busyBlitz" @click="suggestBlitz">{{ busyBlitz ? 'Z.AI составляет…' : '✦ Составить вопросы' }}</button>
+          </div>
+          <template v-if="current.blitz_draft">
+            <label v-for="question in current.blitz_draft.questions" :key="question.id" class="question-check">
+              <input v-model="picked[question.id]" type="checkbox" />
+              <span>
+                <b>{{ question.text }}</b>
+                <small>{{ QUESTION_TYPES[question.type] || question.type }} · {{ question.anchor }}</small>
+                <em class="expected">Понимающий ответ покажет: {{ question.expected_points.join('; ') }}</em>
+              </span>
+            </label>
+            <p class="muted small">Подсказки «понимающий ответ покажет» студенту не отправляются.</p>
+            <button class="secondary full" @click="sendBlitz">Отправить выбранные вопросы</button>
+          </template>
+        </section>
+
+        <section v-if="current.blitz && current.blitz.status !== 'draft'" class="review-section blitz-review">
+          <div class="section-title"><h2>Блиц-опрос</h2><span>{{ current.blitz.status === 'sent' ? 'Ожидаем ответа' : current.blitz.status === 'expired' ? 'Срок истёк' : 'Ответ получен' }}</span></div>
+          <p v-if="current.blitz.status === 'sent'" class="muted">Отправлено {{ formatDate(current.blitz.sent_at, true) }}, срок до {{ formatDate(current.blitz.due_at, true) }}.</p>
+          <p v-else-if="current.blitz.status === 'expired'" class="muted">Студент не ответил до {{ formatDate(current.blitz.due_at, true) }}. Молчание — не признак нечестности: причины бывают любые.</p>
+          <template v-else>
+            <p v-if="current.blitz.ai_analysis?.status === 'running' || current.blitz.ai_analysis?.status === 'pending'" class="muted">Разбор ответов выполняется…</p>
+            <p v-else-if="current.blitz.ai_analysis?.status === 'failed'" class="toast-error">Разбор не выполнен: {{ current.blitz.ai_analysis.error }}</p>
+            <p v-else-if="current.blitz.ai_analysis?.summary" class="detection-summary">{{ current.blitz.ai_analysis.summary }}</p>
+
+            <article v-for="question in current.blitz.questions" :key="question.id" class="blitz-answer">
+              <header><b>{{ question.text }}</b><span v-if="assessmentFor(question.id)" class="confidence" :class="assessmentFor(question.id).verdict === 'consistent' ? 'high' : assessmentFor(question.id).verdict === 'partial' ? 'medium' : 'low'">{{ ANSWER_VERDICTS[assessmentFor(question.id).verdict] }}</span></header>
+              <blockquote>{{ answerText(question.id) || '— ответа нет —' }}</blockquote>
+              <p v-if="assessmentFor(question.id)" class="muted">{{ assessmentFor(question.id).note }}</p>
+              <div v-for="ground in (assessmentFor(question.id)?.grounds || [])" :key="ground" class="evidence"><span>“</span><code>{{ ground }}</code></div>
+              <div v-if="statsFor(question.id)" class="telemetry-row">
+                <span>{{ seconds(statsFor(question.id).active_ms) }} с за ответом</span>
+                <span>набрано {{ statsFor(question.id).typed_chars }}</span>
+                <span>вставлено {{ statsFor(question.id).pasted_chars }}</span>
+                <span v-if="statsFor(question.id).away_count">уходов {{ statsFor(question.id).away_count }} · {{ seconds(statsFor(question.id).longest_away_ms) }} с</span>
+                <b v-for="flag in statsFor(question.id).flags" :key="flag" class="telemetry-flag">{{ current.blitz.telemetry_titles[flag] }}</b>
+              </div>
+            </article>
+
+            <div v-if="current.blitz.telemetry" class="telemetry-note">
+              <template v-if="current.blitz.telemetry.collected">
+                Данные о поведении собраны на устройстве студента и не являются доверенным источником: их можно подделать, отключив скрипт. Отсутствие пометок не доказывает честность, наличие — нечестность.
+                <b v-for="flag in current.blitz.telemetry.flags" :key="flag" class="telemetry-flag">{{ current.blitz.telemetry_titles[flag] }}</b>
+              </template>
+              <template v-else>Данные о поведении не собраны — скрипт был отключён или недоступен. Это не наблюдение о студенте.</template>
+            </div>
+          </template>
+        </section>
+
+        <section v-if="current.detection" class="review-section fraud-panel">
+          <div class="section-title"><h2>Решение по AI-фроду</h2><span>На балл не влияет</span></div>
+          <article v-for="row in current.fraud_decisions" :key="row.decided_at" class="decision-done block">
+            <b>{{ FRAUD_VERDICTS[row.verdict] }}</b><small>{{ formatDate(row.decided_at, true) }}</small><p>{{ row.rationale }}</p>
+          </article>
+          <p class="muted">Решение принимаете вы. Индекс и ответы на вопросы — материал для него, а не он сам. Балл складывается из решений по критериям и от этого вердикта не зависит.</p>
+          <div class="fraud-actions">
+            <label v-for="(title, key) in FRAUD_VERDICTS" :key="key" class="fraud-option"><input v-model="fraudVerdict" type="radio" :value="key" />{{ title }}</label>
+          </div>
+          <textarea v-model="fraudRationale" rows="3" placeholder="Обоснование: на что именно вы опирались (не менее 20 символов)" />
+          <button class="secondary full" :disabled="!fraudVerdict || fraudRationale.trim().length < 20" @click="saveFraudDecision">Зафиксировать решение</button>
+        </section>
         <section class="review-section feedback-editor"><div class="section-title"><h2>Обратная связь студенту</h2><span>Отправится только после подтверждения</span></div><textarea v-model="feedback" rows="7" /><div class="editor-actions"><button class="secondary" @click="rewrite">✦ Переформулировать</button><button class="primary" :disabled="current.submission.status === 'blitz_sent' || current.submission.status === 'completed'" @click="complete">Подтвердить и опубликовать</button></div></section>
       </aside>
     </div>
