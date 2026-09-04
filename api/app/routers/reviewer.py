@@ -11,6 +11,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import (
     AiDetection,
+    Assignment,
     AiSignal,
     AiStatus,
     BlitzEvent,
@@ -40,7 +41,7 @@ from ..serializers import (
     submission_data,
 )
 from ..services import blitz_telemetry
-from ..services.status import overdue_risk, transition
+from ..services.status import deadline_state, transition
 from ..services.ai_reviewer_client import (
     AiReviewerClient,
     AiReviewerError,
@@ -134,18 +135,23 @@ def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -
     rows = db.execute(
         select(Submission, ReviewAssignment)
         .join(ReviewAssignment, ReviewAssignment.submission_id == Submission.id)
+        .join(Assignment, Assignment.id == Submission.assignment_id)
         .where(
             ReviewAssignment.reviewer_id == user.id,
             ReviewAssignment.is_active.is_(True),
             ReviewAssignment.approved_at.is_not(None),
             Submission.status != SubmissionStatus.COMPLETED,
         )
-        .order_by(Submission.is_overdue.desc(), Submission.submitted_at)
+        # Ревьюеру важен его собственный срок, а не то, опоздал ли студент:
+        # сверху ближайший дедлайн, работы без срока — в конец.
+        .order_by(Assignment.deadline_at.asc().nulls_last(), Submission.submitted_at)
     ).all()
     result = []
     for submission, assignment in rows:
         data = submission_data(submission, user.full_name)
-        data["deadline_risk"] = overdue_risk(submission) or submission.is_overdue
+        # Только срок задания. Опоздание студента (`is_overdue`) — другой факт,
+        # он едет отдельным полем и красным срок проверки не красит.
+        data["deadline_state"] = deadline_state(submission)
         data["explanation"] = assignment.explanation
         review = db.scalar(select(Review).where(Review.submission_id == submission.id))
         data["ai_status"] = review.ai_status if review else "failed"

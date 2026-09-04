@@ -627,7 +627,7 @@ def seed_demo(db: Session) -> None:
                 kind="deadline_risk",
                 title="Риск просрочки",
                 body="Одна работа не начата менее чем за 24 часа до контрольного срока",
-                payload={"route": "/methodist/registry"},
+                payload={"route": "/methodist/performance"},
             ),
             Notification(
                 recipient_id=students[0].id,

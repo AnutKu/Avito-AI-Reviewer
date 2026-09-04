@@ -294,7 +294,7 @@ async function gradeSolution() {
   } catch (e) { error.value = e.message } finally { grading.value = false }
 }
 
-// --- отправка готового задания в кабинет («Задания и критерии») -------------
+// --- отправка готового задания в «Банк заданий и критериев» -------------
 const sendingToAssignments = ref(false)
 async function sendToAssignments() {
   const d = task.value?.data
@@ -324,7 +324,7 @@ async function sendToAssignments() {
         pass_score: Math.round((task.value.total_points || 0) * 0.6),
       }),
     })
-    notice.value = 'Задание отправлено в «Задания и критерии» кабинета'
+    notice.value = 'Задание отправлено в «Банк заданий и критериев»'
   } catch (e) { error.value = e.message } finally { sendingToAssignments.value = false }
 }
 
@@ -348,8 +348,7 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
   <template v-if="mode === 'list'">
     <div class="page-heading">
       <div>
-        <span class="eyebrow">КОНТЕНТ КУРСА</span><h1>AI-конструктор ДЗ</h1>
-        <p>Менеджер идей и заданий. Прогоны идут на сервере и не прерываются при выходе в меню.</p>
+        <h1>AI-конструктор заданий и критериев</h1>
       </div>
       <div class="tc-head-actions">
         <button class="secondary" @click="mode = 'import'; saveNav()">Добавить готовое</button>
@@ -391,7 +390,7 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
   <!-- ═══════════════ НОВОЕ ИЗ ИДЕИ ═══════════════ -->
   <template v-else-if="mode === 'new'">
     <div class="page-heading">
-      <div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Новое задание из идеи</h1></div>
+      <div><h1>Новое задание из идеи</h1></div>
       <button class="secondary tc-back" @click="backToList">← К списку</button>
     </div>
     <article class="card tc-form">
@@ -415,7 +414,7 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
   <!-- ═══════════════ ИМПОРТ ГОТОВОГО ═══════════════ -->
   <template v-else-if="mode === 'import'">
     <div class="page-heading">
-      <div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Добавить готовое задание</h1><p>Вставьте существующее ДЗ и его критерии — дальше можно проверить агентами.</p></div>
+      <div><h1>Добавить готовое задание</h1></div>
       <button class="secondary tc-back" @click="backToList">← К списку</button>
     </div>
     <article class="card tc-form">
@@ -452,7 +451,6 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
   <template v-else-if="mode === 'detail'">
     <div class="page-heading">
       <div>
-        <span class="eyebrow">ЗАДАНИЕ</span>
         <h1>{{ task?.data?.title || 'Загрузка…' }}</h1>
         <p v-if="task">v{{ task.version }} · {{ task.source }} · {{ task.data.criteria.length }} критериев · {{ task.total_points }} б.</p>
       </div>
@@ -485,7 +483,7 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
           <button class="text-button" @click="showHidden = !showHidden">{{ showHidden ? 'Скрыть' : 'Показать' }} рубрику ревьюера</button>
           <a class="secondary" :href="`${exportBase}?format=markdown&view=student`" target="_blank">Бриф студента ↗</a>
           <a class="secondary" :href="`${exportBase}?format=markdown&view=reviewer`" target="_blank">Экспорт ревьюера ↗</a>
-          <button class="secondary" :disabled="sendingToAssignments" @click="sendToAssignments">{{ sendingToAssignments ? 'Отправляю…' : '→ В «Задания и критерии»' }}</button>
+          <button class="secondary" :disabled="sendingToAssignments" @click="sendToAssignments">{{ sendingToAssignments ? 'Отправляю…' : '→ В «Банк заданий и критериев»' }}</button>
           <button class="primary" :disabled="validating" @click="validate">{{ validating ? 'Проверяю…' : 'Проверить критерии агентами' }}</button>
         </div>
         <div v-if="showHidden" class="tc-hidden">
