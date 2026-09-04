@@ -34,7 +34,7 @@ from ..serializers import (
 )
 from ..services.assignment import auto_distribute
 from ..services.github import GithubSnapshotError, fetch_github_snapshot
-from ..services.review_pipeline import run_blitz_analysis, run_detection, run_review
+from ..services.review_pipeline import run_blitz_analysis, start_pending_scoring
 from ..services.status import record_initial, transition
 
 # Показывается студенту до начала ответа, дословно. Скрытый сбор поведения —
@@ -190,13 +190,15 @@ def submit(
     )
     db.add(review)
     db.flush()
-    transition(db, submission, SubmissionStatus.PROPOSED, comment="AI-ревью поставлено в очередь")
+    transition(db, submission, SubmissionStatus.PROPOSED, comment="Работа ждёт распределения")
     if assignment.course.auto_assign:
         db.flush()
         auto_distribute(db, actor_id=None)
     db.commit()
-    background_tasks.add_task(run_review, review.id)
-    background_tasks.add_task(run_detection, review.id)
+    # Разбор начинается назначением, а не сдачей: у работы без ревьюера считать
+    # нечего. При включённом авто-распределении ревьюер появился строкой выше,
+    # и разбор стартует здесь же; иначе — когда методист подтвердит назначение.
+    start_pending_scoring(db, background_tasks)
     data = submission_data(submission)
     data["review"] = {"id": str(review.id), "ai_status": review.ai_status}
     return data

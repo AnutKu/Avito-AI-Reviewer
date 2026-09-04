@@ -32,7 +32,9 @@ from ..models import (
     BlitzStatus,
     DetectionCategory,
     LlmCall,
+    Notification,
     Review,
+    ReviewAssignment,
     ReviewerAction,
     ReviewItem,
     RubricVersion,
@@ -184,6 +186,73 @@ def recover_orphaned_reviews() -> int:
         if orphaned:
             db.commit()
         return len(orphaned)
+
+
+def notify_scoring_done(db: Session, review: Review) -> None:
+    """Сообщает ревьюеру, что разбор его работы закончился.
+
+    Разбор запускается назначением и идёт в фоне: ревьюер в этот момент
+    ничего не нажимал и на экран не смотрит. Без уведомления «прозрачно»
+    означало бы «зайдите и обновите» — то есть непрозрачно.
+    """
+
+    assignment = db.scalar(
+        select(ReviewAssignment).where(
+            ReviewAssignment.submission_id == review.submission_id,
+            ReviewAssignment.is_active.is_(True),
+            ReviewAssignment.approved_at.is_not(None),
+        )
+    )
+    if not assignment:
+        return
+    submission = db.get(Submission, review.submission_id)
+    ready = review.ai_status == AiStatus.READY
+    db.add(
+        Notification(
+            recipient_id=assignment.reviewer_id,
+            kind="ai_review_ready" if ready else "ai_review_failed",
+            title="AI-разбор готов" if ready else "AI-разбор не выполнен",
+            body=(
+                f"{submission.assignment.title} · {submission.student.full_name}"
+                if ready
+                else f"{submission.assignment.title}: {review.ai_error or 'причина не записана'}"
+            ),
+            payload={"route": "/reviewer/queue", "submission_id": str(review.submission_id)},
+        )
+    )
+
+
+def start_pending_scoring(db: Session, background_tasks) -> list[UUID]:
+    """Ставит разбор в очередь для назначенных работ, которые ещё не разбирали.
+
+    Разбор начинается не сдачей, а назначением: пока у работы нет ревьюера,
+    считать нечего — прогон стоит денег, а результат может никому не
+    понадобиться (работу переназначат, задание снимут с публикации).
+
+    Подметанием, а не точной бухгалтерией, по той же причине, что и остальные
+    здешние свипы: задача живёт в BackgroundTasks одного процесса и не
+    переживает перезапуск. Пропущенный запуск подхватится следующим
+    назначением, а не потеряется навсегда. Отсюда же идемпотентность: работа
+    со статусом разбора не `pending` второй раз не запускается.
+    """
+
+    assigned = select(ReviewAssignment.submission_id).where(
+        ReviewAssignment.is_active.is_(True),
+        ReviewAssignment.approved_at.is_not(None),
+    )
+    reviews = list(
+        db.scalars(
+            select(Review).where(
+                Review.ai_status == AiStatus.PENDING,
+                Review.submission_id.in_(assigned),
+            )
+        )
+    )
+    for review in reviews:
+        background_tasks.add_task(run_review, review.id)
+        # Детекция — отдельным прогоном после ревью, как и при перезапуске вручную.
+        background_tasks.add_task(run_detection, review.id)
+    return [review.id for review in reviews]
 
 
 def _with_retries(call):
@@ -516,10 +585,14 @@ def run_review(review_id: UUID) -> None:
             }
             review.draft_feedback = result.draft_feedback
             _record_call(db, review.id, "review", metadata)
+            notify_scoring_done(db, review)
             db.commit()
         except Exception as exc:
             db.rollback()
             review = db.get(Review, review_id)
             if review:
                 _mark_failed(review, str(exc)[:2000])
+                # Об отказе ревьюер должен узнать так же, как об удаче: иначе
+                # работа молча висит в очереди без разбора.
+                notify_scoring_done(db, review)
                 db.commit()

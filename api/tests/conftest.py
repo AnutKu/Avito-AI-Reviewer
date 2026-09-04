@@ -28,6 +28,7 @@ def _offline_github(monkeypatch):
         return
 
     from app.routers import student
+    from app.services import review_pipeline
     from app.services.github import GithubSnapshot
 
     def _fake(source_url: str) -> GithubSnapshot:
@@ -38,10 +39,12 @@ def _offline_github(monkeypatch):
         )
 
     monkeypatch.setattr(student, "fetch_github_snapshot", _fake)
-    # фоновые AI-прогоны в тестах не нужны — они бы стучались в ai-reviewer и
-    # тормозили. Сдача ставит в очередь оба: ревью и детекцию.
-    monkeypatch.setattr(student, "run_review", lambda review_id: None)
-    monkeypatch.setattr(student, "run_detection", lambda review_id: None)
+    # Фоновые AI-прогоны в тестах не нужны — они бы стучались в ai-reviewer и
+    # тормозили. Глушим их в самом пайплайне, а не у вызывающих: разбор
+    # запускает назначение, а назначить работу может и студент (авто-режим), и
+    # методист четырьмя разными путями. Одна точка вместо пяти.
+    monkeypatch.setattr(review_pipeline, "run_review", lambda review_id: None)
+    monkeypatch.setattr(review_pipeline, "run_detection", lambda review_id: None)
 
 
 @pytest.fixture

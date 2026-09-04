@@ -43,6 +43,13 @@ export function formatDate(value, withTime = false) {
   }).format(new Date(value))
 }
 
+// Статус AI-разбора виден ревьюеру в очереди: разбор запускается назначением
+// и идёт в фоне, так что «ещё не считали» и «считается прямо сейчас» — разные
+// сообщения. Раньше сюда протекали сырые значения перечисления.
+export const aiStatusNames = {
+  pending: 'Ожидает разбора', running: 'Разбор идёт', ready: 'Готов', failed: 'Ошибка разбора',
+}
+
 export const statusNames = {
   not_submitted: 'Не сдал', submitted: 'Принята', proposed: 'Ждёт распределения', assigned: 'Назначена',
   in_review: 'На проверке', blitz_sent: 'Ждёт ответа', blitz_answered: 'Ответ получен',

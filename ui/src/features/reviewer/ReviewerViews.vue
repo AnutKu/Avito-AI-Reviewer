@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { api, formatDate } from '../../shared/api'
+import { aiStatusNames, api, formatDate } from '../../shared/api'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
 const props = defineProps({ active: String })
@@ -234,7 +234,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
       <button v-for="item in visibleQueue" :key="item.id" class="table-row" :disabled="item.status === 'blitz_sent'" @click="item.status !== 'blitz_sent' && openReview(item.id)">
         <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}</small></span></span>
         <StatusBadge :status="item.status" />
-        <span class="ai-ready" :class="[item.ai_status, { demo: item.is_demo }]"><i>✦</i>{{ item.is_demo ? 'Демо-фикстура' : item.ai_status === 'ready' ? 'Готов' : item.ai_status }}</span>
+        <span class="ai-ready" :class="[item.ai_status, { demo: item.is_demo }]"><i>✦</i>{{ item.is_demo ? 'Демо-фикстура' : aiStatusNames[item.ai_status] || item.ai_status }}</span>
         <span :class="{ danger: item.deadline_risk }"><b>{{ formatDate(item.deadline_at, true) }}</b><small v-if="item.deadline_risk">Риск просрочки</small></span>
         <strong class="row-arrow">{{ item.status === 'blitz_sent' ? '⏳' : '→' }}</strong>
       </button>

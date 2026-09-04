@@ -2,7 +2,7 @@ import re
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -36,6 +36,7 @@ from ..services.distribution import (
     reviewer_headroom,
     reviewer_loads,
 )
+from ..services.review_pipeline import start_pending_scoring
 
 router = APIRouter(prefix="/methodist", tags=["methodist"])
 methodist_guard = require(Role.METHODIST)
@@ -171,6 +172,7 @@ def distribution(user: User = Depends(methodist_guard), db: Session = Depends(ge
 @router.post("/distribution/auto")
 def set_auto_assign(
     payload: AutoAssignPayload,
+    background_tasks: BackgroundTasks,
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -181,7 +183,13 @@ def set_auto_assign(
     course.auto_assign = payload.enabled
     assigned = auto_distribute(db, actor_id=user.id) if payload.enabled else 0
     db.commit()
-    return {"ok": True, "auto_assign": course.auto_assign, "assigned": assigned}
+    scoring = start_pending_scoring(db, background_tasks)
+    return {
+        "ok": True,
+        "auto_assign": course.auto_assign,
+        "assigned": assigned,
+        "scoring_started": len(scoring),
+    }
 
 
 @router.post("/distribution/rebalance")
@@ -235,6 +243,7 @@ def assign_one(
 @router.post("/distribution/apply")
 def apply_distribution(
     payload: DistributionApply,
+    background_tasks: BackgroundTasks,
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -242,7 +251,13 @@ def apply_distribution(
     for item in payload.assignments:
         assign_one(db, item, user)
     db.commit()
-    return {"ok": True, "assigned": len(payload.assignments)}
+    # У работы появился ревьюер — значит, есть ради кого считать.
+    scoring = start_pending_scoring(db, background_tasks)
+    return {
+        "ok": True,
+        "assigned": len(payload.assignments),
+        "scoring_started": len(scoring),
+    }
 
 
 @router.get("/reviewers")
@@ -255,6 +270,7 @@ def reviewers(user: User = Depends(methodist_guard), db: Session = Depends(get_d
 def set_availability(
     reviewer_id: UUID,
     payload: AvailabilityPayload,
+    background_tasks: BackgroundTasks,
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -270,6 +286,7 @@ def set_availability(
         else:
             result["proposals"] = [_proposal_row(row) for row in rebalance(db, [reviewer_id])]
     db.commit()
+    start_pending_scoring(db, background_tasks)
     return result
 
 
@@ -369,6 +386,7 @@ def registry(user: User = Depends(methodist_guard), db: Session = Depends(get_db
 def reassign(
     submission_id: UUID,
     payload: ReassignPayload,
+    background_tasks: BackgroundTasks,
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -383,6 +401,9 @@ def reassign(
         enforce_capacity=not payload.force,
     )
     db.commit()
+    # Работа могла прийти сюда неразобранной — например, её передали раньше,
+    # чем прогон успел стартовать. Готовый разбор свип не трогает.
+    start_pending_scoring(db, background_tasks)
     return {"ok": True}
 
 

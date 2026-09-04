@@ -510,7 +510,13 @@ def seed_demo(db: Session) -> None:
         review = Review(submission_id=submission.id, rubric_version_id=rubric.id)
         db.add(review)
         db.flush()
-        fill_demo_review(db, review, quality)
+        # Фикстура только там, где ревьюер уже назначен. Работа, ждущая
+        # распределения, приходила сюда с готовым «разбором», которого никто
+        # не делал: методист её назначал, ревьюер открывал и видел чужой
+        # придуманный текст под своей фамилией. Теперь такая работа лежит с
+        # `pending`, и разбор по ней запускает назначение — как в проде.
+        if state not in (SubmissionStatus.SUBMITTED, SubmissionStatus.PROPOSED):
+            fill_demo_review(db, review, quality)
 
         if state not in (SubmissionStatus.SUBMITTED, SubmissionStatus.PROPOSED):
             reviewer = reviewers[index % len(reviewers)]
