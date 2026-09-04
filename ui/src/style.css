@@ -136,6 +136,13 @@ h1, h2, h3, p { margin-top: 0; }
 .af-actions { margin-top: 14px; }
 .version-pill.draft { color: #6b7280; background: #eef0f3; }
 .version-pill.pub { color: #087448; background: #e7f8f0; }
+.version-history { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.version-row { display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.version-row.current { border-color: #bfe6cf; background: #f2fbf6; }
+.vh-tag { font-weight: 800; color: #7832bd; font-size: 10px; }
+.vh-main b { display: block; font-size: 10px; }
+.vh-main small { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; }
+.vh-current { color: #087448; font-size: 9px; font-weight: 700; }
 .rubric-card { padding: 0; overflow: hidden; }
 .rubric-card.assign-form { padding: 22px; }
 .rubric-card-head { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 15px 20px; border: 0; background: #fff; cursor: pointer; font: inherit; }

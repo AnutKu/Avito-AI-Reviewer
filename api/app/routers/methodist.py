@@ -426,8 +426,26 @@ def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get
         data = assignment_data(row, rubric)
         data["rubric_version"] = rubric.version if rubric else None
         data["rubric_note"] = rubric.note if rubric else ""
+        data["rubric_versions"] = db.scalar(
+            select(func.count())
+            .select_from(RubricVersion)
+            .where(RubricVersion.assignment_id == row.id)
+        ) or 0
         result.append(data)
     return result
+
+
+def _assignment_snapshot(assignment: Assignment) -> dict:
+    """Редактируемые поля задания — их версионируем вместе с критериями,
+    чтобы «Вернуть» откатывал задание целиком."""
+
+    return {
+        "title": assignment.title,
+        "statement": assignment.statement,
+        "deadline_at": iso(assignment.deadline_at),
+        "effort_weight": assignment.effort_weight,
+        "submission_channel": assignment.submission_channel,
+    }
 
 
 def _criterion_dict(criterion: CriterionIn, seen: set[str]) -> dict:
@@ -484,6 +502,7 @@ def create_assignment(
         pass_score=payload.pass_score,
         author_id=user.id,
         note="Первая версия",
+        assignment_snapshot=_assignment_snapshot(assignment),
     )
     db.add(rubric)
     db.flush()
@@ -523,15 +542,41 @@ def update_assignment(
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
-    del user
     feature(settings.feature_rubric_builder)
     assignment = db.get(Assignment, assignment_id)
     if not assignment:
         raise HTTPException(404, "Задание не найдено")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(assignment, field, value.strip() if isinstance(value, str) else value)
+    db.flush()
+
+    # Правка задания версионируется так же, как правка критериев, — но только
+    # если что-то реально изменилось относительно текущей версии рубрики.
+    current = db.get(RubricVersion, assignment.current_rubric_version_id)
+    snapshot = _assignment_snapshot(assignment)
+    bumped = None
+    if current and current.assignment_snapshot != snapshot:
+        latest = db.scalar(
+            select(func.max(RubricVersion.version)).where(
+                RubricVersion.assignment_id == assignment.id
+            )
+        ) or 0
+        bumped = RubricVersion(
+            assignment_id=assignment.id,
+            version=latest + 1,
+            criteria=current.criteria,
+            max_score=current.max_score,
+            pass_score=current.pass_score,
+            author_id=user.id,
+            note="Правка задания",
+            assignment_snapshot=snapshot,
+        )
+        db.add(bumped)
+        db.flush()
+        assignment.current_rubric_version_id = bumped.id
     db.commit()
-    return {"ok": True}
+    version = bumped.version if bumped else (current.version if current else None)
+    return {"ok": True, "rubric_version": version, "versioned": bumped is not None}
 
 
 @router.post("/assignments/{assignment_id}/rubrics", status_code=201)
@@ -558,13 +603,126 @@ def publish_rubric(
         max_score=max_score,
         pass_score=payload.pass_score,
         author_id=user.id,
-        note=payload.note,
+        note=payload.note or "Правка критериев",
+        assignment_snapshot=_assignment_snapshot(assignment),
     )
     db.add(rubric)
     db.flush()
     assignment.current_rubric_version_id = rubric.id
     db.commit()
     return {"id": str(rubric.id), "version": rubric.version, "max_score": rubric.max_score}
+
+
+def _rubric_row(rubric: RubricVersion, current_id: UUID | None, author: str | None) -> dict:
+    return {
+        "id": str(rubric.id),
+        "version": rubric.version,
+        "criteria": rubric.criteria,
+        "max_score": rubric.max_score,
+        "pass_score": rubric.pass_score,
+        "note": rubric.note,
+        "published_at": iso(rubric.published_at),
+        "author": author,
+        "is_current": rubric.id == current_id,
+        "assignment_snapshot": rubric.assignment_snapshot or {},
+    }
+
+
+@router.get("/assignments/{assignment_id}/rubrics")
+def rubric_versions(
+    assignment_id: UUID,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """История версий рубрики, новые сверху — для отката «как в гите»."""
+
+    del user
+    feature(settings.feature_rubric_builder)
+    assignment = db.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "Задание не найдено")
+    rows = list(
+        db.scalars(
+            select(RubricVersion)
+            .where(RubricVersion.assignment_id == assignment_id)
+            .order_by(RubricVersion.version.desc())
+        )
+    )
+    author_ids = {row.author_id for row in rows if row.author_id}
+    authors = (
+        dict(
+            db.execute(
+                select(User.id, User.full_name).where(User.id.in_(author_ids))
+            ).all()
+        )
+        if author_ids
+        else {}
+    )
+    return [
+        _rubric_row(row, assignment.current_rubric_version_id, authors.get(row.author_id))
+        for row in rows
+    ]
+
+
+@router.post("/assignments/{assignment_id}/rubrics/{version}/restore")
+def restore_rubric(
+    assignment_id: UUID,
+    version: int,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Откат к прошлой версии рубрики — как `git revert`: содержимое старой
+    версии переносится в НОВУЮ. Номера версий только растут, история цела,
+    уже выставленные по старым версиям оценки не трогаются."""
+
+    feature(settings.feature_rubric_builder)
+    assignment = db.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "Задание не найдено")
+    target = db.scalar(
+        select(RubricVersion).where(
+            RubricVersion.assignment_id == assignment_id,
+            RubricVersion.version == version,
+        )
+    )
+    if not target:
+        raise HTTPException(404, "Версия рубрики не найдена")
+    if target.id == assignment.current_rubric_version_id:
+        raise HTTPException(409, "Эта версия уже активна")
+    latest = db.scalar(
+        select(func.max(RubricVersion.version)).where(
+            RubricVersion.assignment_id == assignment_id
+        )
+    ) or 0
+    # Откат задания целиком: возвращаем и условие/срок из снимка той версии.
+    snap = target.assignment_snapshot or {}
+    if snap.get("title"):
+        assignment.title = snap["title"]
+        assignment.statement = snap.get("statement", assignment.statement)
+        assignment.effort_weight = snap.get("effort_weight", assignment.effort_weight)
+        assignment.submission_channel = snap.get(
+            "submission_channel", assignment.submission_channel
+        )
+        raw_deadline = snap.get("deadline_at")
+        assignment.deadline_at = (
+            datetime.fromisoformat(raw_deadline) if raw_deadline else None
+        )
+        db.flush()
+    restored = RubricVersion(
+        assignment_id=assignment_id,
+        version=latest + 1,
+        criteria=target.criteria,
+        max_score=target.max_score,
+        pass_score=target.pass_score,
+        author_id=user.id,
+        note=f"Откат к версии v{version}",
+        assignment_snapshot=_assignment_snapshot(assignment),
+    )
+    db.add(restored)
+    db.flush()
+    assignment.current_rubric_version_id = restored.id
+    db.commit()
+    return {"id": str(restored.id), "version": restored.version, "restored_from": version}
 
 
 @router.get("/analytics")

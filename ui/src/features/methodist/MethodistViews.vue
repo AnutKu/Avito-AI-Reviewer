@@ -275,12 +275,15 @@ function startEditAssignment(item) {
 async function saveAssignment(id) {
   const e = assignmentEdit.value
   try {
-    await api(`/methodist/assignments/${id}`, { method: 'PATCH', body: JSON.stringify({
+    const res = await api(`/methodist/assignments/${id}`, { method: 'PATCH', body: JSON.stringify({
       title: e.title, statement: e.statement,
       deadline_at: e.deadline_at ? new Date(e.deadline_at).toISOString() : null,
       effort_weight: Number(e.effort_weight) || 1, submission_channel: e.submission_channel,
     }) })
-    editAssignmentId.value = ''; notice.value = 'Задание обновлено'; await load()
+    editAssignmentId.value = ''
+    notice.value = res.versioned ? `Задание обновлено — версия рубрики v${res.rubric_version}` : 'Задание обновлено'
+    if (versionsOpenId.value === id) rubricVersions.value = await api(`/methodist/assignments/${id}/rubrics`)
+    await load()
   } catch (err) { error.value = err.message }
 }
 
@@ -293,7 +296,7 @@ async function saveCriteria(item) {
   try {
     await api(`/methodist/assignments/${item.id}/rubrics`, { method: 'POST', body: JSON.stringify({
       criteria: criteriaDraft.value.filter(c => c.title.trim()).map(c => ({ key: c.key || '', title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint })),
-      pass_score: item.pass_score ?? 0, note: 'Обновлено в кабинете',
+      pass_score: item.pass_score ?? 0, note: 'Правка критериев',
     }) })
     criteriaEditId.value = ''; notice.value = `Опубликована рубрика v${(item.rubric_version || 0) + 1}`; await load()
   } catch (e) { error.value = e.message }
@@ -303,6 +306,26 @@ async function publishAssignment(item, published) {
   try {
     await api(`/methodist/assignments/${item.id}/publish`, { method: 'POST', body: JSON.stringify({ published }) })
     notice.value = published ? 'Задание опубликовано — видно студентам курса и в реестре работ' : 'Задание снято с публикации'
+    await load()
+  } catch (e) { error.value = e.message }
+}
+
+// --- история версий рубрики (откат «как в гите») -------------------------
+const versionsOpenId = ref('')
+const rubricVersions = ref([])
+async function toggleVersions(item) {
+  if (versionsOpenId.value === item.id) { versionsOpenId.value = ''; return }
+  try {
+    rubricVersions.value = await api(`/methodist/assignments/${item.id}/rubrics`)
+    versionsOpenId.value = item.id
+  } catch (e) { error.value = e.message }
+}
+async function restoreVersion(item, v) {
+  if (!window.confirm(`Вернуть версию рубрики v${v.version}? Её содержимое станет новой версией — история сохранится, старые оценки не изменятся.`)) return
+  try {
+    const res = await api(`/methodist/assignments/${item.id}/rubrics/${v.version}/restore`, { method: 'POST' })
+    notice.value = `Активна версия рубрики v${res.version} — копия v${res.restored_from}`
+    rubricVersions.value = await api(`/methodist/assignments/${item.id}/rubrics`)
     await load()
   } catch (e) { error.value = e.message }
 }
@@ -506,7 +529,7 @@ onMounted(load)
   </section>
 
   <section v-else-if="active === 'methodist-rubrics'">
-    <div class="page-heading"><div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Задания и критерии</h1><p>Список заданий по курсам. Опубликованные рубрики неизменяемы — правка создаёт новую версию</p></div><button class="primary" @click="toggleNewAssignment">{{ showNewAssignment ? 'Отмена' : '＋ Новое задание' }}</button></div>
+    <div class="page-heading"><div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Задания и критерии</h1><p>Любая правка — критериев или самого задания — создаёт новую версию рубрики; через «Историю версий» можно откатиться на любую</p></div><button class="primary" @click="toggleNewAssignment">{{ showNewAssignment ? 'Отмена' : '＋ Новое задание' }}</button></div>
 
     <article v-if="showNewAssignment && draft" class="card rubric-card assign-form">
       <h2>Новое задание</h2>
@@ -566,7 +589,16 @@ onMounted(load)
             <p class="rubric-statement">{{ item.statement || 'Условие не заполнено' }}</p>
             <div class="rubric-summary"><span><b>{{ item.max_score ?? '—' }}</b><small>макс. балл</small></span><span><b>{{ item.rubric.length }}</b><small>критериев</small></span><span><b>{{ item.effort_weight }}</b><small>трудоёмкость</small></span><span><b>{{ item.deadline_at ? formatDate(item.deadline_at, true) : '—' }}</b><small>дедлайн</small></span></div>
             <div class="criteria-table"><div v-for="(criterion, index) in item.rubric" :key="criterion.key"><span>{{ index + 1 }}</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></div>
-            <div class="rubric-actions"><p>{{ item.rubric_note || '—' }}</p><button class="secondary" @click="startEditAssignment(item)">✎ Задание</button><button class="secondary" @click="startCriteria(item)">✎ Критерии</button><button v-if="!item.published" class="primary" @click="publishAssignment(item, true)">Опубликовать</button><button v-else class="secondary" @click="publishAssignment(item, false)">Снять с публикации</button></div>
+            <div class="rubric-actions"><p>{{ item.rubric_note || '—' }}</p><button class="secondary" @click="toggleVersions(item)">{{ versionsOpenId === item.id ? 'Скрыть историю' : `История версий · ${item.rubric_versions || 1}` }}</button><button class="secondary" @click="startEditAssignment(item)">✎ Задание</button><button class="secondary" @click="startCriteria(item)">✎ Критерии</button><button v-if="!item.published" class="primary" @click="publishAssignment(item, true)">Опубликовать</button><button v-else class="secondary" @click="publishAssignment(item, false)">Снять с публикации</button></div>
+            <div v-if="versionsOpenId === item.id" class="version-history">
+              <div v-for="v in rubricVersions" :key="v.id" class="version-row" :class="{ current: v.is_current }">
+                <span class="vh-tag">v{{ v.version }}</span>
+                <span class="vh-main"><b>{{ v.note || '—' }}</b><small><template v-if="v.assignment_snapshot && v.assignment_snapshot.title !== item.title">«{{ v.assignment_snapshot.title }}» · </template>{{ v.criteria.length }} критериев · {{ v.max_score }} б. · проходной {{ v.pass_score }}<template v-if="v.author"> · {{ v.author }}</template><template v-if="v.published_at"> · {{ formatDate(v.published_at, true) }}</template></small></span>
+                <span v-if="v.is_current" class="vh-current">текущая</span>
+                <button v-else class="text-button" @click="restoreVersion(item, v)">Вернуть</button>
+              </div>
+              <p v-if="!rubricVersions.length" class="empty-mini">Версий пока нет.</p>
+            </div>
           </template>
         </div>
       </article>

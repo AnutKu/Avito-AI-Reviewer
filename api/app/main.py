@@ -21,6 +21,8 @@ _COLUMN_MIGRATIONS = (
     "UPDATE assignments a SET published_at = a.created_at "
     "WHERE a.published_at IS NULL "
     "AND EXISTS (SELECT 1 FROM submissions s WHERE s.assignment_id = a.id)",
+    "ALTER TABLE rubric_versions ADD COLUMN IF NOT EXISTS assignment_snapshot JSONB "
+    "NOT NULL DEFAULT '{}'::jsonb",
 )
 
 

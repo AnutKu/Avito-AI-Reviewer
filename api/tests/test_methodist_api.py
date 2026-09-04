@@ -283,6 +283,114 @@ def test_publish_new_rubric_version_via_criteria_editor(methodist):
     assert len(after["rubric"]) == len(item["rubric"]) + 1
 
 
+def test_rubric_version_history_lists_every_version_current_first(methodist):
+    item = methodist.get("/api/methodist/assignments").json()[0]
+    criteria = [{"key": c["key"], "title": c["title"], "max_score": c["max_score"]} for c in item["rubric"]]
+    criteria.append({"key": "", "title": "Ещё критерий", "max_score": 1})
+    methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics",
+        json={"criteria": criteria, "pass_score": 6, "note": "v+1"},
+    )
+    history = methodist.get(f"/api/methodist/assignments/{item['id']}/rubrics").json()
+    versions = [row["version"] for row in history]
+    assert versions == sorted(versions, reverse=True)
+    assert sum(row["is_current"] for row in history) == 1
+    assert history[0]["is_current"], "текущая версия идёт первой"
+
+
+def test_restore_old_rubric_makes_a_new_version_with_old_content(methodist):
+    item = methodist.get("/api/methodist/assignments").json()[0]
+    original = [{"key": c["key"], "title": c["title"], "max_score": c["max_score"]} for c in item["rubric"]]
+    base_version = item["rubric_version"]
+
+    changed = [*original, {"key": "", "title": "Временный критерий", "max_score": 3}]
+    methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics",
+        json={"criteria": changed, "pass_score": 6, "note": "лишний критерий"},
+    )
+
+    resp = methodist.post(f"/api/methodist/assignments/{item['id']}/rubrics/{base_version}/restore")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["restored_from"] == base_version
+    assert body["version"] == base_version + 2  # base -> +1 (правка) -> +2 (откат)
+
+    after = next(a for a in methodist.get("/api/methodist/assignments").json() if a["id"] == item["id"])
+    assert after["rubric_version"] == base_version + 2
+    assert [c["title"] for c in after["rubric"]] == [c["title"] for c in original]
+    assert "Откат к версии" in after["rubric_note"]
+
+
+def test_editing_the_assignment_bumps_the_rubric_version(methodist):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "Версионирование задания",
+            "statement": "старое условие",
+            "criteria": [{"title": "Критерий", "max_score": 5}],
+        },
+    ).json()
+    assert created["rubric_version"] == 1
+
+    # правка задания — версия растёт, как и у правки критериев
+    resp = methodist.patch(
+        f"/api/methodist/assignments/{created['id']}", json={"statement": "новое условие"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["versioned"] is True and body["rubric_version"] == 2
+
+    history = methodist.get(f"/api/methodist/assignments/{created['id']}/rubrics").json()
+    assert history[0]["version"] == 2 and history[0]["note"] == "Правка задания"
+
+    # повторное сохранение без изменений новую версию не плодит
+    again = methodist.patch(
+        f"/api/methodist/assignments/{created['id']}", json={"statement": "новое условие"}
+    ).json()
+    assert again["versioned"] is False and again["rubric_version"] == 2
+
+
+def test_restore_rolls_back_statement_not_just_criteria(methodist):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "Откат условия",
+            "statement": "исходное условие",
+            "criteria": [{"title": "Критерий", "max_score": 5}],
+        },
+    ).json()
+    methodist.patch(
+        f"/api/methodist/assignments/{created['id']}",
+        json={"statement": "переписанное условие", "title": "Откат условия · v2"},
+    )
+    restored = methodist.post(
+        f"/api/methodist/assignments/{created['id']}/rubrics/1/restore"
+    )
+    assert restored.status_code == 200
+    after = next(
+        a for a in methodist.get("/api/methodist/assignments").json() if a["id"] == created["id"]
+    )
+    assert after["statement"] == "исходное условие"
+    assert after["title"] == "Откат условия"
+
+
+def test_restore_rejects_missing_and_current_version(methodist):
+    item = methodist.get("/api/methodist/assignments").json()[0]
+    assert methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics/999/restore"
+    ).status_code == 404
+    assert methodist.post(
+        f"/api/methodist/assignments/{item['id']}/rubrics/{item['rubric_version']}/restore"
+    ).status_code == 409
+
+
+def test_rubric_history_is_methodist_only(reviewer):
+    assignment_id = "00000000-0000-0000-0000-000000000000"
+    assert reviewer.get(
+        f"/api/methodist/assignments/{assignment_id}/rubrics"
+    ).status_code == 403
+
+
 def test_auto_assign_applies_to_freshly_submitted_work(methodist):
     from app.db import SessionLocal
     from app.models import Assignment, Course, Enrollment, Role, User
