@@ -10,16 +10,19 @@ from ..db import get_db
 from ..models import Notification, User
 from ..security import current_user
 from ..serializers import iso
+from ..services.ai_reviewer_client import AiReviewerClient
 
 router = APIRouter(tags=["common"])
 
 
 @router.get("/config")
 def config() -> dict:
+    ai_status = AiReviewerClient().health()
     return {
         "features": settings.feature_flags(),
         "demo_data_sections": DEMO_DATA_SECTIONS,
         "mock_modules": MOCK_MODULES,
+        "ai": ai_status,
     }
 
 

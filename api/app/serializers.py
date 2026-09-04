@@ -83,6 +83,7 @@ def review_data(review: Review, include_internal: bool = True) -> dict:
                 "ai_error": review.ai_error,
                 "summary": review.raw_result.get("summary", ""),
                 "draft_feedback": review.draft_feedback,
+                "is_demo": bool(review.raw_result.get("demo_data", False)),
                 "items": [item_data(item) for item in review.items],
                 "signals": [signal_data(signal) for signal in review.signals],
             }
