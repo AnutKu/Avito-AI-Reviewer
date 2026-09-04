@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -533,6 +533,39 @@ def publish_assignment(
     assignment.published_at = datetime.now(UTC) if payload.published else None
     db.commit()
     return {"ok": True, "published": assignment.published_at is not None}
+
+
+@router.delete("/assignments/{assignment_id}")
+def delete_assignment(
+    assignment_id: UUID,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Полное удаление задания вместе с версиями рубрики.
+
+    Запрещено, если по заданию уже есть сданные работы — их оценки и история
+    так не теряются; для «убрать из выдачи» есть снятие с публикации."""
+
+    del user
+    feature(settings.feature_rubric_builder)
+    assignment = db.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "Задание не найдено")
+    submitted = db.scalar(
+        select(func.count())
+        .select_from(Submission)
+        .where(Submission.assignment_id == assignment_id)
+    ) or 0
+    if submitted:
+        raise HTTPException(
+            409,
+            f"Нельзя удалить: по заданию есть сданные работы ({submitted}). "
+            "Снимите его с публикации.",
+        )
+    db.execute(delete(RubricVersion).where(RubricVersion.assignment_id == assignment_id))
+    db.delete(assignment)
+    db.commit()
+    return {"ok": True, "deleted": str(assignment_id)}
 
 
 @router.patch("/assignments/{assignment_id}")

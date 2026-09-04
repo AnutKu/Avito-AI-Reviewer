@@ -391,6 +391,43 @@ def test_rubric_history_is_methodist_only(reviewer):
     ).status_code == 403
 
 
+def test_delete_assignment_removes_it_with_its_rubric_versions(methodist):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={"title": "На удаление", "criteria": [{"title": "K", "max_score": 5}]},
+    ).json()
+    # добавим вторую версию рубрики — она тоже должна уйти
+    methodist.post(
+        f"/api/methodist/assignments/{created['id']}/rubrics",
+        json={"criteria": [{"title": "K", "max_score": 5}, {"title": "K2", "max_score": 2}], "pass_score": 4},
+    )
+
+    resp = methodist.delete(f"/api/methodist/assignments/{created['id']}")
+    assert resp.status_code == 200 and resp.json()["deleted"] == created["id"]
+
+    ids = [a["id"] for a in methodist.get("/api/methodist/assignments").json()]
+    assert created["id"] not in ids
+    assert methodist.get(f"/api/methodist/assignments/{created['id']}/rubrics").status_code == 404
+
+
+def test_delete_assignment_blocked_when_it_has_submissions(methodist):
+    groups = methodist.get("/api/methodist/submissions").json()
+    with_work = next(g for g in groups if g["stats"]["submitted"] > 0)
+    resp = methodist.delete(f"/api/methodist/assignments/{with_work['assignment']['id']}")
+    assert resp.status_code == 409
+    assert "сдан" in resp.json()["detail"].lower()
+
+
+def test_delete_missing_assignment_is_404(methodist):
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert methodist.delete(f"/api/methodist/assignments/{missing}").status_code == 404
+
+
+def test_delete_assignment_is_methodist_only(reviewer):
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert reviewer.delete(f"/api/methodist/assignments/{missing}").status_code == 403
+
+
 def test_auto_assign_applies_to_freshly_submitted_work(methodist):
     from app.db import SessionLocal
     from app.models import Assignment, Course, Enrollment, Role, User
