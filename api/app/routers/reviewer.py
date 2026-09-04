@@ -40,6 +40,7 @@ from ..services.ai_reviewer_client import (
     AiReviewerUnavailable,
 )
 from ..services.review_pipeline import (
+    blitz_questions_with_retries,
     expire_blitz_sessions,
     fail_stale_detections,
     fail_stale_reviews,
@@ -342,7 +343,7 @@ def suggest_blitz(
         if item.get("direction", 0) > 0
     ]
     try:
-        response = AiReviewerClient().blitz_questions(
+        response = blitz_questions_with_retries(
             assignment=submission.assignment,
             snapshot=snapshot,
             count=payload.count,

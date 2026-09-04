@@ -49,6 +49,7 @@ from .ai_reviewer_client import (
     AiReviewerError,
     AiReviewerNotConfigured,
     BlitzAnalysisResponse,
+    BlitzQuestionsResponse,
     DetectionResponse,
     ProviderMetadata,
     ReviewResponse,
@@ -219,6 +220,25 @@ def _review_with_retries(
 def _detection_with_retries(*, assignment: Assignment, snapshot: Snapshot) -> DetectionResponse:
     return _with_retries(
         lambda: AiReviewerClient().detect(assignment=assignment, snapshot=snapshot)
+    )
+
+
+def blitz_questions_with_retries(
+    *, assignment: Assignment, snapshot: Snapshot, count: int, focus: list[str]
+) -> BlitzQuestionsResponse:
+    """Публичная: генерацию дёргает роутер синхронно, а не фоновая задача.
+
+    Ломается здесь ровно то же, что и в остальных стадиях: модель изредка
+    отдаёт ответ не по контракту — например, выкладывает expected_points
+    строкой вместо массива. Это промах выборки, а не отказ провайдера:
+    соседние вопросы в том же ответе приходят правильной формы. Ревьюеру,
+    который нажал кнопку и ждёт, показывать за это ошибку незачем.
+    """
+
+    return _with_retries(
+        lambda: AiReviewerClient().blitz_questions(
+            assignment=assignment, snapshot=snapshot, count=count, focus=focus
+        )
     )
 
 

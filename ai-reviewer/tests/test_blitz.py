@@ -104,6 +104,31 @@ class QuestionGenerationTest(unittest.TestCase):
         with self.assertRaises(ZaiInvalidResponse):
             ZaiReviewer(client=fake).blitz_questions(questions_request())
 
+    def test_the_shape_the_model_actually_broke_is_rejected(self):
+        # Живой ответ GLM: пункты уехали из массива — первый строкой в
+        # expected_points, второй отдельным полем объекта, где сам пункт стал
+        # ключом. Чинить это молча нельзя: чтобы собрать список обратно, надо
+        # угадывать, где кончился один пункт и начался другой, — то есть
+        # дописывать за модель то, чего она не сказала. Повтор дешевле догадки.
+        broken = {
+            **question(),
+            "expected_points": "Называет registered_model_name",
+            "Говорит, что нужен run_id лучшего запуска": "Упоминает стадию",
+        }
+        fake = FakeClient(json.dumps({"questions": [broken]}, ensure_ascii=False))
+
+        with self.assertRaises(ZaiInvalidResponse):
+            ZaiReviewer(client=fake).blitz_questions(questions_request())
+
+    def test_the_field_shape_is_shown_by_example_not_only_by_schema(self):
+        # По одной схеме модель промахивалась мимо формы expected_points.
+        fake = FakeClient(json.dumps({"questions": [question()]}, ensure_ascii=False))
+
+        ZaiReviewer(client=fake).blitz_questions(questions_request())
+
+        system = fake.chat.completions.kwargs["messages"][0]["content"]
+        self.assertIn('"expected_points": ["<первый пункт>", "<второй пункт>"]', system)
+
     def test_duplicate_ids_are_rejected(self):
         fake = FakeClient(
             json.dumps({"questions": [question("q1"), question("q1")]}, ensure_ascii=False)
