@@ -118,6 +118,8 @@ h1, h2, h3, p { margin-top: 0; }
 .auto-toggle input { margin-top: 2px; }
 .auto-toggle b { display: block; font-size: 11px; }
 .auto-toggle small { display: block; margin-top: 3px; font-size: 9px; color: var(--muted); line-height: 1.5; }
+.cap-hint { margin: 0 0 13px; padding: 9px 13px; background: #eef8ff; border: 1px solid #d5eefe; border-radius: 10px; color: #3d5566; font-size: 11px; line-height: 1.5; }
+.cap-hint b { color: var(--blue); font-weight: 700; }
 .cap-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 13px; }
 .cap-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 10px; }
 .cap-chip b { font-weight: 700; }

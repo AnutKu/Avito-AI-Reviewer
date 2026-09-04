@@ -134,7 +134,7 @@ onUnmounted(() => {
 <template>
   <section v-if="active === 'student-assignments'">
     <template v-if="mode === 'list'">
-      <div class="page-heading"><div><span class="eyebrow">МОЁ ОБУЧЕНИЕ</span><h1>Мои задания</h1><p>Здесь собраны задания, статусы проверки и обратная связь</p></div><div class="progress-ring"><b>{{ submittedCount }}/{{ assignments.length }}</b><small>сдано</small></div></div>
+      <div class="page-heading"><div><h1>Мои задания</h1></div><div class="progress-ring"><b>{{ submittedCount }}/{{ assignments.length }}</b><small>сдано</small></div></div>
       <div v-if="loading" class="skeleton-list"><i v-for="x in 3" :key="x" /></div>
       <div v-else class="assignment-list">
         <button v-for="item in assignments" :key="item.id" class="assignment-row" @click="openAssignment(item)">
@@ -149,7 +149,7 @@ onUnmounted(() => {
 
     <template v-else-if="mode === 'detail' && detail">
       <button class="back" @click="mode = 'list'">← Все задания</button>
-      <div class="page-heading compact"><div><span class="eyebrow">ЗАДАНИЕ</span><h1>{{ detail.title }}</h1><p>{{ detail.course }} · дедлайн {{ formatDate(detail.deadline_at, true) }}</p></div></div>
+      <div class="page-heading compact"><div><h1>{{ detail.title }}</h1><p>{{ detail.course }} · дедлайн {{ formatDate(detail.deadline_at, true) }}</p></div></div>
       <div class="two-columns">
         <article class="card prose-card"><h2>Условие</h2><p>{{ detail.statement }}</p><h2>Критерии оценки</h2><div v-for="criterion in detail.rubric" :key="criterion.key" class="criterion-short"><span>✓</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></article>
         <aside class="card submit-card"><span class="card-icon blue">↗</span><h2>Сдать работу</h2><p>Укажите ссылку на публичный GitHub-репозиторий. После отправки мы сохраним снапшот.</p><label>Ссылка на репозиторий<input v-model="sourceUrl" placeholder="https://github.com/..." /></label><button class="primary full" @click="submit">Отправить на проверку</button><small>После отправки ссылка будет зафиксирована</small></aside>
@@ -165,7 +165,7 @@ onUnmounted(() => {
   </section>
 
   <section v-else-if="active === 'student-blitz'">
-    <div class="page-heading"><div><span class="eyebrow">МОЁ ОБУЧЕНИЕ</span><h1>Дополнительные вопросы</h1><p>Вопросы помогают уточнить детали вашей работы и не влияют на оценку автоматически</p></div></div>
+    <div class="page-heading"><div><h1>Дополнительные вопросы</h1></div></div>
     <div v-if="!blitz.length" class="empty-state"><span>✓</span><h2>Сейчас вопросов нет</h2><p>Если ревьюеру понадобится уточнение, оно появится здесь.</p></div>
     <article v-for="session in blitz" :key="session.id" class="card blitz-card">
       <div class="blitz-head"><div><span class="eyebrow">{{ session.assignment }}</span><h2>Дополнительные вопросы по работе</h2></div><span class="deadline-chip">До {{ formatDate(session.due_at, true) }}</span></div>

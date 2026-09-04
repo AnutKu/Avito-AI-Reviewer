@@ -223,7 +223,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
 
 <template>
   <section v-if="active === 'reviewer-queue'">
-    <div class="page-heading"><div><span class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span><h1>Моя очередь</h1><p>Работы, которые ждут вашего решения</p></div><div class="queue-summary"><b>{{ visibleQueue.length }}</b><small>ждут действия</small></div></div>
+    <div class="page-heading"><div><h1>Моя очередь</h1></div><div class="queue-summary"><b>{{ visibleQueue.length }}</b><small>ждут действия</small></div></div>
     <div class="filter-row">
       <label class="chk"><input type="checkbox" v-model="showAllQueue" /> Показывать все актуальные работы</label>
       <span />
@@ -243,7 +243,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
   </section>
 
   <section v-else-if="active === 'reviewer-history'">
-    <div class="page-heading"><div><span class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span><h1>История</h1><p>Все работы, которые были вам назначены, включая проверенные</p></div><div class="queue-summary"><b>{{ history.length }}</b><small>всего работ</small></div></div>
+    <div class="page-heading"><div><h1>История</h1></div><div class="queue-summary"><b>{{ history.length }}</b><small>всего работ</small></div></div>
     <div class="table-card">
       <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>Балл</span><span>Сдано</span><span /></div>
       <button v-for="item in history" :key="item.id" class="table-row" :disabled="!item.is_current || item.status === 'completed'" @click="item.is_current && item.status !== 'completed' && openReview(item.id)">
@@ -259,7 +259,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
 
   <section v-else-if="active === 'reviewer-review' && current" class="review-page">
     <button class="back" @click="emit('navigate', 'reviewer-queue')">← Вернуться в очередь</button>
-    <div class="review-title"><div><span class="eyebrow">РЕВЬЮ РАБОТЫ</span><h1>{{ current.submission.student }}</h1><p>{{ current.submission.assignment }} · сдано {{ formatDate(current.submission.submitted_at, true) }}</p></div><StatusBadge :status="current.submission.status" /></div>
+    <div class="review-title"><div><h1>{{ current.submission.student }}</h1><p>{{ current.submission.assignment }} · сдано {{ formatDate(current.submission.submitted_at, true) }}</p></div><StatusBadge :status="current.submission.status" /></div>
     <div v-if="notice" class="toast-success">✓ {{ notice }}<button @click="notice = ''">×</button></div>
     <div v-if="error" class="toast-error">{{ error }}<button @click="error = ''">×</button></div>
     <div class="review-workspace">

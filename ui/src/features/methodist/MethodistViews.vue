@@ -9,6 +9,7 @@ const report = ref(null)            // объединённый дашборд: 
 const dashTab = ref('overview')
 const showAllCriteria = ref(false)
 const performance = ref(null)       // матрица «студент × задание»
+const perfTab = ref('matrix')       // matrix | registry (бывший «Реестр работ»)
 const perfSearch = ref('')
 const perfSort = ref('name')
 const distribution = ref([])        // работы, ожидающие распределения
@@ -31,17 +32,19 @@ async function load(active = props.active) {
       report.value = await api('/methodist/analytics')
       if (!report.value.quality) dashTab.value = 'overview'   // вкладка выключена фиче-флагом
     }
-    if (active === 'methodist-performance') performance.value = await api('/methodist/performance')
+    if (active === 'methodist-performance') {
+      ;[performance.value, registry.value] = await Promise.all([
+        api('/methodist/performance'),
+        api('/methodist/submissions'),
+      ])
+      if (registry.value.length && !openGroups.value.size) openGroups.value.add(registry.value[0].assignment.id)
+    }
     if (active === 'methodist-distribution') {
       const s = await api('/methodist/distribution')
       autoAssign.value = s.auto_assign
       reviewerLoads.value = s.reviewers
       distribution.value = s.waiting.map(r => ({ ...r, chosen: r.reviewer?.id || '' }))
       assignedRows.value = s.assigned.map(r => ({ ...r, chosen: r.reviewer.id }))
-    }
-    if (active === 'methodist-registry') {
-      registry.value = await api('/methodist/submissions')
-      if (registry.value.length && !openGroups.value.size) openGroups.value.add(registry.value[0].assignment.id)
     }
     if (active === 'methodist-rubrics') {
       ;[assignments.value, courses.value] = await Promise.all([api('/methodist/assignments'), api('/methodist/courses')])
@@ -324,7 +327,7 @@ onMounted(load)
 
   <section v-if="active === 'methodist-dashboard' && report">
     <div class="page-heading">
-      <div><span class="eyebrow">ОБЗОР КУРСА</span><h1>Дашборд курса</h1><p>{{ report.course ? report.course.title : 'Курс' }} · посчитано по живым записям: {{ report.live_records }} работ, {{ ov.assignments }} опубликованных заданий</p></div>
+      <div><h1>Аналитика курса</h1></div>
       <div class="dash-tabs"><button :class="{ active: dashTab === 'overview' }" @click="dashTab = 'overview'">Обзор</button><button v-if="report.quality" :class="{ active: dashTab === 'quality' }" @click="dashTab = 'quality'">Качество проверки</button></div>
     </div>
 
@@ -412,7 +415,12 @@ onMounted(load)
   </section>
 
   <section v-else-if="active === 'methodist-performance' && performance">
-    <div class="page-heading"><div><span class="eyebrow">УСПЕВАЕМОСТЬ</span><h1>Таблица успеваемости</h1><p>{{ performance.course ? performance.course.title : 'Курс' }} · опубликованные задания. В ячейке — итоговый балл после ревью</p></div></div>
+    <div class="page-heading">
+      <div><h1>Успеваемость</h1></div>
+      <div class="dash-tabs"><button :class="{ active: perfTab === 'matrix' }" @click="perfTab = 'matrix'">Матрица</button><button :class="{ active: perfTab === 'registry' }" @click="perfTab = 'registry'">Реестр работ</button></div>
+    </div>
+
+    <template v-if="perfTab === 'matrix'">
     <div class="metric-grid">
       <article><span class="metric-icon blue">▦</span><div><small>Студентов</small><b>{{ performance.summary.students }}</b><em>{{ performance.summary.assignments }} заданий в зачёте</em></div></article>
       <article><span class="metric-icon green">✓</span><div><small>Сдано</small><b>{{ performance.summary.submitted }} / {{ performance.summary.expected }}</b><em>{{ pct(performance.summary.submission_rate) }} ожидаемых работ</em></div></article>
@@ -441,15 +449,40 @@ onMounted(load)
       </template>
       <div class="table-row perf-foot" :style="{ gridTemplateColumns: perfColumns }"><span>Итого по заданию</span><span v-for="column in performance.assignments" :key="column.id" class="perf-cell"><b>{{ pct(column.stats.avg_percent) }}</b><small>{{ column.stats.submitted }}/{{ column.stats.expected }}</small></span><span class="perf-total"><b>{{ pct(performance.summary.avg_percent) }}</b><small>зачётов {{ pct(performance.summary.pass_rate) }}</small></span></div>
     </div>
-    <div v-else class="empty-state"><span>∅</span><h2>Показывать нечего</h2><p>Опубликуйте задание в «Задания и критерии» или измените поиск.</p></div>
+    <div v-else class="empty-state"><span>∅</span><h2>Показывать нечего</h2><p>Опубликуйте задание в «Банке заданий и критериев» или измените поиск.</p></div>
+    </template>
+
+    <template v-else>
+    <div class="registry-tools"><label class="search"><input v-model="registrySearch" placeholder="Поиск по студенту или заданию" /></label><select v-model="statusFilter"><option value="">Все статусы</option><option v-for="(name, key) in statusNames" :key="key" :value="key">{{ name }}</option></select></div>
+
+    <div v-for="g in filteredRegistry" :key="g.assignment.id" class="reg-group">
+      <button class="reg-group-head" @click="toggleGroup(g.assignment.id)">
+        <span class="reg-caret">{{ isGroupOpen(g.assignment.id) ? '▾' : '▸' }}</span>
+        <span class="reg-group-title"><b>{{ g.assignment.title }}</b><small>{{ g.assignment.course }}</small></span>
+        <span class="reg-stats"><em>сдали {{ g.stats.submitted }}/{{ g.stats.students }}</em><em>проверено {{ g.stats.completed }}</em><em v-if="g.stats.overdue" class="danger">просрочка {{ g.stats.overdue }}</em></span>
+      </button>
+      <div v-if="isGroupOpen(g.assignment.id)" class="table-card registry-table">
+        <div class="table-row table-head"><span>Студент</span><span>Статус</span><span>Ревьюер</span><span>Сдано</span><span>AI</span></div>
+        <div v-for="row in g.rows" :key="row.student_id" class="table-row">
+          <span class="student-cell"><i>{{ initials(row.student) }}</i><span><b>{{ row.student }}</b></span></span>
+          <StatusBadge :status="row.status" />
+          <span class="registry-reviewer"><b>{{ row.reviewer || '—' }}</b></span>
+          <span :class="{ danger: row.is_overdue }"><b>{{ row.submitted_at ? formatDate(row.submitted_at, true) : '—' }}</b><small v-if="row.is_overdue">После срока</small></span>
+          <span v-if="row.ai_status" class="ai-ready ready"><i>✦</i>{{ row.ai_status === 'ready' ? 'Готов' : row.ai_status }}</span><span v-else>—</span>
+        </div>
+      </div>
+    </div>
+    <div v-if="!filteredRegistry.length" class="empty-state"><span>∅</span><h2>Ничего не найдено</h2><p>Опубликуйте задание в «Банке заданий и критериев» или измените фильтр.</p></div>
+    </template>
   </section>
 
   <section v-else-if="active === 'methodist-distribution'">
-    <div class="page-heading"><div><h1>Распределение работ</h1></div><button v-if="!autoAssign" class="primary" :disabled="!waitingReady" @click="applyDistribution">Подтвердить всё · {{ waitingReady }}</button></div>
+    <div class="page-heading"><div><h1>Распределение ревьюеров</h1></div><button v-if="!autoAssign" class="primary" :disabled="!waitingReady" @click="applyDistribution">Подтвердить всё · {{ waitingReady }}</button></div>
     <label class="auto-toggle">
       <input type="checkbox" :checked="autoAssign" @change="toggleAuto" />
       <span><b>Автоматическое распределение</b><small>Новые работы назначаются сразу при сдаче и при снятии ревьюера — без ручного подтверждения. Конкретную работу всё равно можно передать другому ревьюеру ниже.</small></span>
     </label>
+    <p class="cap-hint">ⓘ Максимум активных работ на одного ревьюера задаётся в <b>«Настройках курса»</b>.</p>
     <div class="cap-strip">
       <div v-for="person in reviewerLoads" :key="person.id" class="cap-chip" :class="{ off: !person.available, full: isFull(person) }">
         <b>{{ person.name }}</b><em>{{ person.load }}/{{ person.capacity }}</em>
@@ -483,32 +516,8 @@ onMounted(load)
     </template>
   </section>
 
-  <section v-else-if="active === 'methodist-registry'">
-    <div class="page-heading"><div><span class="eyebrow">УПРАВЛЕНИЕ ПОТОКОМ</span><h1>Реестр работ</h1><p>Опубликованные задания. Строка на каждого студента курса, включая не сдавших. Переназначение — на экране «Распределение»</p></div></div>
-    <div class="registry-tools"><label class="search"><input v-model="registrySearch" placeholder="Поиск по студенту или заданию" /></label><select v-model="statusFilter"><option value="">Все статусы</option><option v-for="(name, key) in statusNames" :key="key" :value="key">{{ name }}</option></select></div>
-
-    <div v-for="g in filteredRegistry" :key="g.assignment.id" class="reg-group">
-      <button class="reg-group-head" @click="toggleGroup(g.assignment.id)">
-        <span class="reg-caret">{{ isGroupOpen(g.assignment.id) ? '▾' : '▸' }}</span>
-        <span class="reg-group-title"><b>{{ g.assignment.title }}</b><small>{{ g.assignment.course }}</small></span>
-        <span class="reg-stats"><em>сдали {{ g.stats.submitted }}/{{ g.stats.students }}</em><em>проверено {{ g.stats.completed }}</em><em v-if="g.stats.overdue" class="danger">просрочка {{ g.stats.overdue }}</em></span>
-      </button>
-      <div v-if="isGroupOpen(g.assignment.id)" class="table-card registry-table">
-        <div class="table-row table-head"><span>Студент</span><span>Статус</span><span>Ревьюер</span><span>Сдано</span><span>AI</span></div>
-        <div v-for="row in g.rows" :key="row.student_id" class="table-row">
-          <span class="student-cell"><i>{{ initials(row.student) }}</i><span><b>{{ row.student }}</b></span></span>
-          <StatusBadge :status="row.status" />
-          <span class="registry-reviewer"><b>{{ row.reviewer || '—' }}</b></span>
-          <span :class="{ danger: row.is_overdue }"><b>{{ row.submitted_at ? formatDate(row.submitted_at, true) : '—' }}</b><small v-if="row.is_overdue">После срока</small></span>
-          <span v-if="row.ai_status" class="ai-ready ready"><i>✦</i>{{ row.ai_status === 'ready' ? 'Готов' : row.ai_status }}</span><span v-else>—</span>
-        </div>
-      </div>
-    </div>
-    <div v-if="!filteredRegistry.length" class="empty-state"><span>∅</span><h2>Ничего не найдено</h2><p>Опубликуйте задание в «Задания и критерии» или измените фильтр.</p></div>
-  </section>
-
   <section v-else-if="active === 'methodist-rubrics'">
-    <div class="page-heading"><div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Задания и критерии</h1><p>Список заданий по курсам. Условие и критерии можно править в любой момент — изменения применяются сразу</p></div><button class="primary" @click="toggleNewAssignment">{{ showNewAssignment ? 'Отмена' : '＋ Новое задание' }}</button></div>
+    <div class="page-heading"><div><h1>Банк заданий и критериев</h1></div><button class="primary" @click="toggleNewAssignment">{{ showNewAssignment ? 'Отмена' : '＋ Новое задание' }}</button></div>
 
     <article v-if="showNewAssignment && draft" class="card rubric-card assign-form">
       <h2>Новое задание</h2>
@@ -573,13 +582,13 @@ onMounted(load)
         </div>
       </article>
     </template>
-    <div v-if="!assignments.length && !showNewAssignment" class="empty-state"><span>✦</span><h2>Пока нет заданий</h2><p>Создайте первое кнопкой «＋ Новое задание» или отправьте из AI-конструктора ДЗ.</p></div>
+    <div v-if="!assignments.length && !showNewAssignment" class="empty-state"><span>✦</span><h2>Пока нет заданий</h2><p>Создайте первое кнопкой «＋ Новое задание» или отправьте из AI-конструктора заданий и критериев.</p></div>
   </section>
 
   <TaskCreaterView v-else-if="active === 'methodist-taskcreater'" />
 
   <section v-else-if="active === 'methodist-settings' && course">
-    <div class="page-heading"><div><span class="eyebrow">КУРС</span><h1>Настройки курса</h1><p>Правила коммуникации, нагрузки и дедлайнов</p></div><button class="primary" @click="saveCourse">Сохранить изменения</button></div>
+    <div class="page-heading"><div><h1>Настройки курса</h1></div><button class="primary" @click="saveCourse">Сохранить изменения</button></div>
     <div class="settings-grid"><article class="card form-card"><div class="setting-icon blue">Aa</div><div><h2>Tone of voice</h2><p>Этот стиль используется в черновиках обратной связи.</p><label>Стиль<input v-model="course.tone_of_voice.style" /></label><label>Обращение<select v-model="course.tone_of_voice.address"><option>на вы</option><option>на ты</option></select></label><label>Правила<textarea :value="course.tone_of_voice.rules.join('\n')" rows="4" @input="course.tone_of_voice.rules = $event.target.value.split('\n')" /></label></div></article><article class="card form-card"><div class="setting-icon purple">▦</div><div><h2>Нагрузка ревьюеров</h2><p>Жёсткий предел активных работ на одного человека.</p><label>Максимум работ<input v-model.number="course.reviewer_capacity" type="number" min="1" max="100" /></label><div class="setting-hint">Распределение не предложит ревьюера, если лимит исчерпан.</div></div></article><article class="card form-card"><div class="setting-icon green">◷</div><div><h2>Контрольные сроки</h2><p>Риск подсвечивается за 24 часа до дедлайна.</p><div class="setting-hint">Порог фиксированный и пока не настраивается.</div><label class="toggle-row disabled"><span><b>In-app уведомления</b><small>Всегда включены для всех ролей</small></span><input type="checkbox" checked disabled /></label><label class="toggle-row disabled"><span><b>Telegram</b><small>Выключено фиче-флагом</small></span><input type="checkbox" disabled /></label></div></article></div>
   </section>
 </template>

@@ -25,12 +25,11 @@ const allNav = {
     { id: 'reviewer-history', label: 'История', icon: '⟲' },
   ],
   methodist: [
-    { id: 'methodist-dashboard', label: 'Дашборд курса', icon: '◫' },
+    { id: 'methodist-dashboard', label: 'Аналитика курса', icon: '◫' },
     { id: 'methodist-performance', label: 'Успеваемость', icon: '↗' },
-    { id: 'methodist-distribution', label: 'Распределение', icon: '👥', feature: 'distribution' },
-    { id: 'methodist-registry', label: 'Реестр работ', icon: '▤' },
-    { id: 'methodist-rubrics', label: 'Задания и критерии', icon: '◇', feature: 'rubric_builder' },
-    { id: 'methodist-taskcreater', label: 'AI-конструктор ДЗ', icon: '✦', feature: 'rubric_builder' },
+    { id: 'methodist-distribution', label: 'Распределение ревьюеров', icon: '👥', feature: 'distribution' },
+    { id: 'methodist-rubrics', label: 'Банк заданий и критериев', icon: '◇', feature: 'rubric_builder' },
+    { id: 'methodist-taskcreater', label: 'AI-конструктор заданий и критериев', icon: '✦', feature: 'rubric_builder' },
     { id: 'methodist-settings', label: 'Настройки курса', icon: '⚙' },
   ],
 }
