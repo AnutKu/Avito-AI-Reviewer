@@ -126,16 +126,32 @@ def consolidate_edits(
     return edits
 
 
-def build_score_matrix(
+def build_score_samples(
     criteria: list[Criterion], gradings: list[GraderOutput]
-) -> dict[str, dict[str, float]]:
-    """{criterion_key: {persona: points}} — для наглядного показа расхождений оценок."""
-    matrix: dict[str, dict[str, float]] = {}
+) -> dict[str, dict[str, list[float]]]:
+    """{criterion_key: {persona: [баллы по каждому сэмплу]}}.
+
+    Одно решение могли оценить несколько раз — сэмплы нужны целиком, иначе
+    разброс модели на одном и том же ответе не увидеть.
+    """
+
+    samples: dict[str, dict[str, list[float]]] = {}
     for c in criteria:
-        row: dict[str, float] = {}
+        row: dict[str, list[float]] = {}
         for g in gradings:
             for gc in g.scores:
                 if gc.criterion_key == c.key:
-                    row[g.persona] = round(gc.points, 2)
-        matrix[c.key] = row
-    return matrix
+                    row.setdefault(g.persona, []).append(round(gc.points, 2))
+        samples[c.key] = row
+    return samples
+
+
+def build_score_matrix(
+    criteria: list[Criterion], gradings: list[GraderOutput]
+) -> dict[str, dict[str, float]]:
+    """{criterion_key: {persona: points}} — средний балл по сэмплам этой персоны."""
+
+    return {
+        key: {persona: round(sum(values) / len(values), 2) for persona, values in row.items() if values}
+        for key, row in build_score_samples(criteria, gradings).items()
+    }

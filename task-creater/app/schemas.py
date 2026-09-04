@@ -236,7 +236,12 @@ class RoundArtifact(BaseModel):
     findings: list[Finding]
     proposed_edits: list[CriterionEdit]
     score_matrix: dict[str, dict[str, float]] = Field(
-        description="{criterion_key: {persona: points}} — для наглядного показа расхождений"
+        description="{criterion_key: {persona: points}} — средний балл по сэмплам"
+    )
+    score_samples: dict[str, dict[str, list[float]]] = Field(
+        default_factory=dict,
+        description="{criterion_key: {persona: [баллы по каждому сэмплу]}} — разброс модели "
+        "на одном и том же решении",
     )
     converged: bool
     convergence_reason: str
@@ -332,11 +337,19 @@ class ValidationConfigIn(BaseModel):
     personas: list[str] | None = Field(
         default=None, description="ключи профилей решателей; null — набор по умолчанию"
     )
-    persona_type: Literal["student", "reviewer"] = Field(
+    persona_type: Literal["student", "reviewer", "both"] = Field(
         default="reviewer",
-        description="За один прогон проверяется что-то одно: student — понятна ли постановка "
-        "задания, reviewer — однозначны ли критерии. Тип задаёт фокус критика; "
-        "решатели нужны обоим, потому что без решений сравнивать нечего.",
+        description="Что разбирать: student — понятна ли постановка задания, reviewer — "
+        "однозначны ли критерии, both — и то и другое за один прогон. Тип задаёт фокус "
+        "критика; решатели работают всегда, потому что без решений сравнивать нечего.",
+    )
+    grader_samples: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="Сколько раз оценить КАЖДОЕ решение по рубрике. Больше одного — чтобы "
+        "увидеть стохастический разброс самой модели: если один и тот же ответ по одному и "
+        "тому же критерию получает разные баллы, дело не в решении, а в формулировке.",
     )
     max_rounds: int = Field(default=2, ge=1, le=4)
     token_budget: int = Field(default=200_000, ge=10_000)
@@ -435,6 +448,16 @@ class FieldAssistOut(BaseModel):
     field: str
     proposed: str
     note: str = Field(default="", description="одной строкой: что изменено и почему")
+
+
+class CriterionAssistIn(BaseModel):
+    """Достроить критерий до проверяемого: описание, признаки, уровни."""
+
+    title: str = Field(min_length=1)
+    max_points: float = Field(gt=0)
+    student_hint: str = ""
+    description: str = ""
+    task_context: dict[str, Any] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #

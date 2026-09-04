@@ -37,7 +37,10 @@ class AiRun(Base):
         ForeignKey("assignments.id", ondelete="CASCADE"), index=True
     )
     revision: Mapped[int] = mapped_column(Integer, default=0)
-    persona_type: Mapped[str] = mapped_column(String(16))  # student | reviewer
+    persona_type: Mapped[str] = mapped_column(String(16))  # student | reviewer | both
+    # Сколько раз оценивали каждое решение: 1 — обычный прогон, больше — замер
+    # стохастики модели на одном и том же ответе.
+    samples: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     progress: Mapped[str] = mapped_column(Text, default="")
     # Ключ идемпотентности присылает клиент: двойной клик по «Запустить» не

@@ -18,6 +18,8 @@ from app.db import SessionLocal, get_session
 from app.llm import LLMClient
 from app.schemas import (
     CourseIdeaIn,
+    Criterion,
+    CriterionAssistIn,
     DecisionsIn,
     FieldAssistIn,
     FieldAssistOut,
@@ -54,6 +56,17 @@ async def healthz() -> dict:
 @router.get("/personas", response_model=list[PersonaOut], tags=["meta"])
 async def list_personas() -> list[PersonaOut]:
     return [PersonaOut(key=p.key, title=p.title, description=p.description) for p in PERSONAS.values()]
+
+
+@router.post("/assist/criterion", response_model=Criterion, tags=["meta"])
+async def assist_criterion(body: CriterionAssistIn) -> Criterion:
+    """Достроить критерий до применимого: признаки сильного ответа и уровни.
+
+    Без состояния, как и помощь по блоку: возвращается предложение, вставляет
+    его человек.
+    """
+
+    return await asyncio.to_thread(roles.assist_criterion, LLMClient(), body)
 
 
 @router.post("/assist/field", response_model=FieldAssistOut, tags=["meta"])

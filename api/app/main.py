@@ -26,6 +26,7 @@ _COLUMN_MIGRATIONS = (
     "NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE assignments ADD COLUMN IF NOT EXISTS authoring JSONB "
     "NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS samples INTEGER NOT NULL DEFAULT 1",
 )
 
 

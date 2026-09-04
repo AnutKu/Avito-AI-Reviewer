@@ -18,8 +18,12 @@ import {
   kindLabel,
   openRecommendations,
   publishBlockers,
+  personaAbout,
+  personaFace,
+  personaName,
   runIntro,
   runTitle,
+  samplingNote,
   scoreWarning,
   sortAssignments,
   splitByPublication,
@@ -145,5 +149,42 @@ describe('маршруты', () => {
 
   it('живой раздел не редиректится', () => {
     assert.equal(parseHash('#methodist-performance').redirectTo, null)
+  })
+})
+
+describe('персоны', () => {
+  it('у каждой персоны своё лицо и человеческое имя', () => {
+    const keys = ['diligent_strong', 'minimalist_weak', 'rule_lawyer', 'ambiguity_prober']
+    const faces = keys.map(personaFace)
+    assert.equal(new Set(faces).size, 4, 'смайлики не должны повторяться — иначе они не различают')
+    assert.equal(personaName('rule_lawyer'), 'Юрист правил')
+    assert.ok(personaAbout('minimalist_weak').length > 10)
+  })
+
+  it('незнакомая персона не ломает карточку', () => {
+    assert.equal(personaFace('кто-то новый'), '🤖')
+    assert.equal(personaName('кто-то новый'), 'кто-то новый')
+  })
+})
+
+describe('проверка на персонах', () => {
+  it('режим «оба» объясняет, что проверяются оба слоя', () => {
+    const intro = runIntro('both')
+    assert.match(intro, /AI-студенты/)
+    assert.match(intro, /AI-ревьюеры/)
+  })
+
+  it('везде, где участвуют ревьюеры, сказано откуда берутся решения', () => {
+    // Без этого непонятно, что оценивают ревьюеры, если студентов не запускали.
+    for (const type of ['reviewer', 'both']) {
+      assert.match(runIntro(type), /Решения для проверки пишут AI-студенты/)
+    }
+  })
+
+  it('повторы объясняются только когда они были', () => {
+    assert.equal(samplingNote(1), '')
+    assert.equal(samplingNote(0), '')
+    assert.match(samplingNote(3), /оценено 3 раз/)
+    assert.match(samplingNote(3), /разброс самой модели/)
   })
 })

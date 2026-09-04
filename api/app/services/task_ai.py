@@ -5,9 +5,10 @@
 
 Два принципа, ради которых всё и написано:
 
-* **Один прогон — один тип персон.** AI-студенты проверяют, понятна ли
-  постановка; AI-ревьюеры — однозначны ли критерии. Смешивать нечего: это
-  разные вопросы с разными выводами.
+* **Прогон отвечает на заданный вопрос.** AI-студенты проверяют, понятна ли
+  постановка; AI-ревьюеры — однозначны ли критерии; «оба» разбирает сразу два
+  слоя. Решения пишут студенты ВСЕГДА: ревьюеру нужно что-то оценивать, и
+  отдельно запускать студентов ради этого не нужно.
 * **AI ничего не переписывает молча.** Прогон отдаёт рекомендации, каждую
   человек применяет, правит или отклоняет. Повторный прогон — только явным
   действием: изменение задания само по себе ничего не запускает.
@@ -30,7 +31,7 @@ from .taskcreater_client import TaskCreaterClient, TaskCreaterError
 
 log = logging.getLogger(__name__)
 
-PERSONA_TYPES = ("student", "reviewer")
+PERSONA_TYPES = ("student", "reviewer", "both")
 OPEN_STATUSES = ("queued", "running")
 
 # Важность в терминах ТЗ. Движок мыслит severity агента, кабинет — тем, насколько
@@ -151,7 +152,9 @@ def draft_from_engine_task(task: dict, *, track: str = "", total_points: float =
             "context": data.get("context_md", ""),
             "expected_result": "\n".join(f"• {item}" for item in deliverables),
             "learning_objectives": data.get("learning_objectives") or [],
-            "reference_solution": data.get("reference_solution_md", ""),
+            # Эталон сознательно НЕ переносим: решение, с которым сверяют
+            # студентов, пишет лектор. Сгенерированный эталон — это ответ модели
+            # на её же задание, и сверять с ним было бы подлогом.
             "reviewer_notes": data.get("reviewer_notes", ""),
         },
         "criteria": [from_engine_criterion(item) for item in data.get("criteria") or []],
@@ -203,7 +206,7 @@ def recommendations_from_result(
     by_key = {c.get("key"): c for c in (criteria or [])}
     rows: list[dict] = []
 
-    if persona_type == "reviewer":
+    if persona_type in ("reviewer", "both"):
         for edit in result.get("proposed_edits") or []:
             proposed = edit.get("proposed_criterion")
             key = edit.get("criterion_key") or ""
@@ -225,12 +228,18 @@ def recommendations_from_result(
 
     # Находки без машинной правки: по заданию — всегда, по рубрике — только те,
     # что критик не закрыл правкой (иначе одно и то же приедет дважды).
-    covered = {addr for edit in (result.get("proposed_edits") or []) for addr in (edit.get("addresses") or [])}
+    covered = {
+        addr
+        for edit in (result.get("proposed_edits") or [])
+        for addr in (edit.get("addresses") or [])
+    }
     for finding in result.get("open_findings") or []:
         is_brief = finding.get("target") == "brief"
         if persona_type == "student" and not is_brief:
             continue
-        if persona_type == "reviewer" and (is_brief or finding.get("id") in covered):
+        if persona_type == "reviewer" and is_brief:
+            continue
+        if persona_type in ("reviewer", "both") and not is_brief and finding.get("id") in covered:
             continue
         key = finding.get("criterion_key")
         field = BRIEF_FIELDS.get(finding.get("kind"), "statement")
@@ -266,29 +275,50 @@ def persona_cards(result: dict, persona_type: str) -> list[dict]:
     if not rounds:
         return []
     last = rounds[-1]
-    if persona_type == "student":
-        return [
-            {
-                "key": item.get("persona"),
-                "understood": not item.get("exploited_ambiguities"),
-                "approach": item.get("approach_notes") or "",
-                "troubles": list(item.get("exploited_ambiguities") or []),
-            }
-            for item in last.get("solutions") or []
-        ]
-    return [
-        {
-            "key": item.get("persona"),
-            "total_points": item.get("total_points"),
-            "comment": item.get("overall_comment") or "",
-            "undecidable": [
-                s.get("criterion_key")
-                for s in item.get("scores") or []
-                if not s.get("decidable")
-            ],
+
+    cards: dict[str, dict] = {}
+    order: list[str] = []
+    for item in last.get("solutions") or []:
+        key = item.get("persona")
+        order.append(key)
+        cards[key] = {
+            "key": key,
+            "understood": not item.get("exploited_ambiguities"),
+            "approach": item.get("approach_notes") or "",
+            "troubles": list(item.get("exploited_ambiguities") or []),
         }
-        for item in last.get("gradings") or []
-    ]
+
+    # Оценок может быть несколько на одну персону — это сэмплы одного и того же
+    # решения. Показываем средний балл и все места, где рубрики не хватило.
+    graded: dict[str, list[dict]] = {}
+    for item in last.get("gradings") or []:
+        graded.setdefault(item.get("persona"), []).append(item)
+    for key, items in graded.items():
+        if key not in cards:
+            order.append(key)
+            cards[key] = {"key": key, "understood": None, "approach": "", "troubles": []}
+        points = [x.get("total_points") for x in items if x.get("total_points") is not None]
+        undecidable = {
+            s.get("criterion_key")
+            for x in items
+            for s in x.get("scores") or []
+            if not s.get("decidable")
+        }
+        cards[key].update(
+            {
+                "total_points": round(sum(points) / len(points), 2) if points else None,
+                "comment": items[0].get("overall_comment") or "",
+                "undecidable": sorted(k for k in undecidable if k),
+                "samples": len(items),
+            }
+        )
+
+    rows = [cards[key] for key in dict.fromkeys(order)]
+    hidden = {
+        "student": ("total_points", "comment", "undecidable"),
+        "reviewer": ("understood", "approach", "troubles"),
+    }.get(persona_type, ())
+    return [{k: v for k, v in row.items() if k not in hidden} for row in rows]
 
 
 def score_spread(result: dict) -> list[dict]:
@@ -314,6 +344,34 @@ def score_spread(result: dict) -> list[dict]:
     return sorted(rows, key=lambda r: -r["spread"])
 
 
+def sampling_spread(result: dict) -> list[dict]:
+    """Разброс баллов при ПОВТОРНОЙ оценке одного и того же решения.
+
+    Это другой разброс, чем между персонами: там разные решения, здесь одно и то
+    же. Если один ответ по одному критерию получает разные баллы, дело не в
+    работе студента, а в формулировке — её и надо чинить.
+    """
+
+    rounds = result.get("rounds") or []
+    if not rounds:
+        return []
+    rows = []
+    for key, per_persona in (rounds[-1].get("score_samples") or {}).items():
+        spreads = [max(v) - min(v) for v in per_persona.values() if len(v) > 1]
+        if not spreads:
+            continue
+        rows.append(
+            {
+                "criterion_key": key,
+                "samples": max(len(v) for v in per_persona.values()),
+                "worst": round(max(spreads), 2),
+                "average": round(sum(spreads) / len(spreads), 2),
+                "stable": max(spreads) == 0,
+            }
+        )
+    return sorted(rows, key=lambda r: -r["worst"])
+
+
 def run_summary(result: dict, persona_type: str, recommendations: list[dict]) -> dict:
     """Верхнее резюме прогона: что прошло хорошо, что нет, насколько критично.
 
@@ -329,6 +387,7 @@ def run_summary(result: dict, persona_type: str, recommendations: list[dict]) ->
     understood = sum(1 for card in persona_cards(result, "student") if card["understood"])
     wide = [row for row in score_spread(result) if row["spread"] >= 1]
 
+    unstable = [row for row in sampling_spread(result) if not row["stable"]]
     if persona_type == "student":
         good = f"Постановку поняли без догадок: {understood} из {solutions}."
         headline = (
@@ -336,7 +395,7 @@ def run_summary(result: dict, persona_type: str, recommendations: list[dict]) ->
             if not recommendations
             else f"Есть места, где студенты поймут задание по-разному: {len(recommendations)}."
         )
-    else:
+    elif persona_type == "reviewer":
         good = (
             "Оценки сошлись по всем критериям."
             if not wide
@@ -347,6 +406,18 @@ def run_summary(result: dict, persona_type: str, recommendations: list[dict]) ->
             if not recommendations
             else f"Критерии стоит доработать: предложено правок — {len(recommendations)}."
         )
+    else:
+        agreed = (
+            "Оценки сошлись по всем критериям."
+            if not wide
+            else f"Критериев с широким разбросом: {len(wide)}."
+        )
+        good = f"Постановку поняли без догадок: {understood} из {solutions}. {agreed}"
+        headline = (
+            "И постановка, и критерии в порядке."
+            if not recommendations
+            else f"Есть что доработать: замечаний и правок — {len(recommendations)}."
+        )
 
     return {
         "verdict": "ok" if not recommendations else "attention",
@@ -356,6 +427,11 @@ def run_summary(result: dict, persona_type: str, recommendations: list[dict]) ->
         "recommendations": len(recommendations),
         "converged": bool(result.get("converged")),
         "solutions": solutions,
+        "unstable": len(unstable),
+        # Два разных разброса, и путать их нельзя: `spread` — между персонами
+        # (разные решения), `sampling` — между повторами (одно и то же решение).
+        "spread": score_spread(result)[:8],
+        "sampling": sampling_spread(result)[:8],
         "note": result.get("summary") or "",
     }
 
@@ -460,11 +536,13 @@ def create_run(
     persona_type: str,
     idempotency_key: str | None,
     created_by: UUID | None,
+    samples: int = 1,
 ) -> AiRun:
     run = AiRun(
         assignment_id=assignment.id,
         revision=current_revision(db, assignment),
         persona_type=persona_type,
+        samples=samples,
         status="queued",
         progress="поставлен в очередь",
         idempotency_key=idempotency_key,
@@ -541,6 +619,7 @@ def execute_run(run_id: UUID) -> None:
             return
         rubric = db.get(RubricVersion, assignment.current_rubric_version_id)
         persona_type = run.persona_type
+        samples = run.samples or 1
         payload = engine_payload(
             title=assignment.title,
             statement=assignment.statement,
@@ -560,7 +639,9 @@ def execute_run(run_id: UUID) -> None:
     try:
         imported = engine.import_task(payload)
         _progress(run_id, "запускаем персон", external_task_id=imported.get("id"))
-        started = engine.start_validation(imported["id"], persona_type=persona_type)
+        started = engine.start_validation(
+            imported["id"], persona_type=persona_type, samples=samples
+        )
         external_run_id = started["id"]
         _progress(run_id, started.get("progress") or "прогон идёт", external_run_id=external_run_id)
 

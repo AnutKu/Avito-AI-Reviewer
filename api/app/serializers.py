@@ -53,6 +53,7 @@ def ai_run_data(run: Any, recommendations: list | None = None) -> dict:
         "progress": run.progress,
         "summary": run.summary or None,
         "personas": run.personas or [],
+        "samples": run.samples or 1,
         "metrics": run.metrics or {},
         "error": run.error,
         "created_at": iso(run.created_at),

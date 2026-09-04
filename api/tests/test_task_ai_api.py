@@ -75,10 +75,27 @@ class FakeEngine:
         FakeEngine.last_payload = payload
         return {"id": "engine-task-1"}
 
-    def start_validation(self, task_id, *, persona_type, max_rounds=1):
+    last_samples = 1
+
+    def start_validation(self, task_id, *, persona_type, max_rounds=1, samples=1):
         del task_id, max_rounds
         FakeEngine.calls.append(f"validate:{persona_type}")
+        FakeEngine.last_samples = samples
         return {"id": "engine-run-1", "status": "running", "progress": "решатели работают"}
+
+    def assist_criterion(self, *, title, max_points, student_hint="", description="", task_context=None):
+        del student_hint, description, task_context
+        FakeEngine.calls.append("assist:criterion")
+        return {
+            "key": "c1", "title": title, "max_points": max_points,
+            "student_hint": "что оценивается", "description": "проверяемый признак",
+            "check_kind": "subjective", "evidence_hint": "куда смотреть",
+            "expected_signals": ["есть формула", "есть вывод"],
+            "rubric_levels": [
+                {"points": 0, "label": "Не выполнено", "descriptor": "нет"},
+                {"points": max_points, "label": "Полно", "descriptor": "есть"},
+            ],
+        }
 
     def get_run(self, run_id):
         del run_id
@@ -119,7 +136,7 @@ def draft(methodist):
     return created.json()["id"]
 
 
-def _run(client, assignment_id, persona_type="student", **body):
+def _run(client, assignment_id, persona_type="student", **body):  # noqa: D103
     return client.post(
         f"/api/methodist/assignments/{assignment_id}/ai-runs",
         json={"persona_type": persona_type, **body},
@@ -384,3 +401,72 @@ def test_a_failed_generation_is_reported_not_swallowed(methodist, engine):
     engine.task_state = "generation_failed"
     body = methodist.get("/api/methodist/assignments/draft-from-idea/engine-task-1").json()
     assert body["status"] == "failed" and body["error"]
+
+
+# --- «оба», сэмплы и детализация критерия -----------------------------------
+
+
+def test_both_is_a_valid_run_type(methodist, draft, engine):
+    response = _run(methodist, draft, "both")
+    assert response.status_code == 202, response.text
+    assert response.json()["persona_type"] == "both"
+    assert "validate:both" in engine.calls
+
+
+def test_samples_reach_the_engine(methodist, draft, engine):
+    response = _run(methodist, draft, "reviewer", samples=3)
+    assert response.status_code == 202, response.text
+    assert response.json()["samples"] == 3
+    assert engine.last_samples == 3, "число повторов должно доехать до движка"
+
+
+def test_one_sample_by_default(methodist, draft, engine):
+    assert _run(methodist, draft, "reviewer").json()["samples"] == 1
+
+
+def test_too_many_samples_are_refused(methodist, draft, engine):
+    assert _run(methodist, draft, "reviewer", samples=99).status_code == 422
+
+
+def test_criterion_assist_returns_signals_and_levels(methodist, engine):
+    response = methodist.post(
+        "/api/methodist/ai-criterion",
+        json={"title": "Тесты на фикстурах", "max_score": 3, "context": {"title": "Кейс"}},
+    )
+    assert response.status_code == 200, response.text
+    out = response.json()
+    assert out["max_score"] == 3
+    assert out["expected_signals"] and out["rubric_levels"]
+
+
+def test_criterion_assist_writes_nothing(methodist, draft, engine):
+    before = methodist.get("/api/methodist/assignments").json()
+    methodist.post("/api/methodist/ai-criterion", json={"title": "Метрики", "max_score": 5})
+    assert methodist.get("/api/methodist/assignments").json() == before
+
+
+def test_rubric_levels_survive_a_save(methodist):
+    """Уровни терялись при сохранении — и ревьюеры каждый раз требовали их снова."""
+
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "С уровнями",
+            "criteria": [
+                {
+                    "title": "Метрики",
+                    "max_score": 4,
+                    "description": "Названы метрики с формулой",
+                    "expected_signals": ["есть формула"],
+                    "rubric_levels": [
+                        {"points": 0, "label": "Не выполнено", "descriptor": "метрик нет"},
+                        {"points": 4, "label": "Полно", "descriptor": "метрики с формулой"},
+                    ],
+                }
+            ],
+        },
+    )
+    assignment_id = created.json()["id"]
+    row = next(a for a in methodist.get("/api/methodist/assignments").json() if a["id"] == assignment_id)
+    assert len(row["rubric"][0]["rubric_levels"]) == 2
+    assert row["rubric"][0]["rubric_levels"][1]["descriptor"] == "метрики с формулой"

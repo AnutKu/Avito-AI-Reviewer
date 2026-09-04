@@ -15,6 +15,7 @@ from app.llm import prompts as P
 from app.schemas import (
     CourseIdeaIn,
     Criterion,
+    CriterionAssistIn,
     CriticOutput,
     FieldAssistIn,
     FieldAssistOut,
@@ -99,6 +100,26 @@ def critique(
         temperature=0.3,
         max_tokens=8000,
     )
+
+
+def assist_criterion(llm: LLMClient, body: CriterionAssistIn) -> Criterion:
+    """Достраивает критерий до применимого: признаки и уровни с порогами.
+
+    Именно их отсутствие AI-ревьюеры возвращают замечанием чаще всего — дешевле
+    попросить агента сразу, чем чинить это потом правкой по итогам прогона.
+    """
+
+    out = llm.structured(
+        system=P.CRITERION_SYSTEM,
+        user=P.criterion_user(
+            body.title, body.max_points, body.student_hint, body.description, body.task_context
+        ),
+        schema=Criterion,
+        tier="smart",
+        temperature=0.3,
+        max_tokens=3000,
+    )
+    return out.model_copy(update={"title": body.title, "max_points": body.max_points})
 
 
 def assist_field(llm: LLMClient, body: FieldAssistIn) -> FieldAssistOut:

@@ -7,11 +7,13 @@
 
 from app.services.task_ai import (
     criteria_after,
+    draft_from_engine_task,
     engine_payload,
     from_engine_criterion,
     persona_cards,
     recommendations_from_result,
     run_summary,
+    sampling_spread,
     score_spread,
     to_engine_criterion,
 )
@@ -252,3 +254,115 @@ def test_add_appends_a_new_criterion():
 def test_applying_does_not_mutate_the_original_criteria():
     criteria_after(CRITERIA, EDIT, "прочее")
     assert CRITERIA[1] == {"key": "metrics", "title": "Метрики", "max_score": 6}
+
+
+# --- режим «и то, и другое» ------------------------------------------------
+
+
+def test_both_covers_the_brief_and_the_criteria_at_once():
+    rows = recommendations_from_result(RESULT, "both", criteria=CRITERIA)
+    targets = {row["target_type"] for row in rows}
+    assert targets == {"criterion", "task_field"}, "разбираются оба слоя"
+
+
+def test_both_still_does_not_repeat_a_covered_finding():
+    rows = recommendations_from_result(RESULT, "both", criteria=CRITERIA)
+    assert len(rows) == 2, "F1 закрыта правкой E1, отдельной рекомендацией не едет"
+
+
+def test_both_shows_one_card_per_persona():
+    """Иначе одна и та же персона выглядела бы двумя разными участниками."""
+
+    cards = persona_cards(RESULT, "both")
+    assert [c["key"] for c in cards] == ["diligent_strong", "minimalist_weak"]
+    assert cards[0]["understood"] is True and cards[0]["total_points"] == 9
+
+
+def test_each_run_type_shows_only_what_it_checked():
+    student = persona_cards(RESULT, "student")[0]
+    reviewer = persona_cards(RESULT, "reviewer")[0]
+    assert "total_points" not in student and "understood" in student
+    assert "understood" not in reviewer and "total_points" in reviewer
+
+
+def test_both_summary_speaks_about_both_layers():
+    rows = recommendations_from_result(RESULT, "both", criteria=CRITERIA)
+    summary = run_summary(RESULT, "both", rows)
+    assert "Постановку поняли" in summary["good"] and "разбросом" in summary["good"]
+
+
+# --- разброс при повторной оценке ------------------------------------------
+
+SAMPLED = {
+    **RESULT,
+    "rounds": [
+        {
+            **RESULT["rounds"][0],
+            "score_samples": {
+                "metrics": {"diligent_strong": [6, 6, 6], "minimalist_weak": [2, 4, 3]},
+                "hypotheses": {"diligent_strong": [4, 4, 4], "minimalist_weak": [3.5, 3.5, 3.5]},
+            },
+        }
+    ],
+}
+
+
+def test_sampling_spread_finds_the_unstable_criterion():
+    rows = sampling_spread(SAMPLED)
+    assert rows[0]["criterion_key"] == "metrics"
+    assert rows[0]["worst"] == 2 and rows[0]["samples"] == 3
+    assert rows[0]["stable"] is False
+
+
+def test_a_criterion_scored_the_same_every_time_is_stable():
+    rows = sampling_spread(SAMPLED)
+    steady = next(r for r in rows if r["criterion_key"] == "hypotheses")
+    assert steady["worst"] == 0 and steady["stable"] is True
+
+
+def test_a_single_sample_says_nothing_about_stochasticity():
+    """Один замер разброса не даёт — показывать «стабильно» было бы враньём."""
+
+    single = {"rounds": [{"score_samples": {"metrics": {"diligent_strong": [6]}}}]}
+    assert sampling_spread(single) == []
+
+
+def test_summary_counts_unstable_criteria():
+    summary = run_summary(SAMPLED, "reviewer", [])
+    assert summary["unstable"] == 1
+    assert summary["sampling"][0]["criterion_key"] == "metrics"
+
+
+def test_persona_card_averages_repeated_gradings():
+    doubled = {
+        "rounds": [
+            {
+                "solutions": [],
+                "gradings": [
+                    {"persona": "p", "total_points": 4, "scores": [], "overall_comment": "раз"},
+                    {"persona": "p", "total_points": 6, "scores": [], "overall_comment": "два"},
+                ],
+            }
+        ]
+    }
+    card = persona_cards(doubled, "reviewer")[0]
+    assert card["total_points"] == 5 and card["samples"] == 2
+
+
+# --- эталон пишет лектор ----------------------------------------------------
+
+
+def test_the_reference_solution_is_never_generated():
+    """Эталон — это ответ, с которым сверяют студентов. Его пишет человек."""
+
+    task = {
+        "total_points": 10,
+        "data": {
+            "title": "Кейс", "statement_md": "условие", "context_md": "контекст",
+            "reference_solution_md": "решение, придуманное моделью",
+            "criteria": [{"key": "c1", "title": "Крит", "max_points": 10}],
+        },
+    }
+    draft = draft_from_engine_task(task, track="Аналитика")
+    assert "reference_solution" not in draft["authoring"]
+    assert "модель" not in str(draft["authoring"])

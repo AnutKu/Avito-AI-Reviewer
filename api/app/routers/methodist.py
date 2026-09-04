@@ -138,7 +138,9 @@ class AiFillPayload(BaseModel):
     mode: str = "fill"
     current: str = ""
     instruction: str = ""
-    context: dict = Field(default_factory=dict, description="уже заполненные блоки — как они выглядят в редакторе")
+    context: dict = Field(
+        default_factory=dict, description="уже заполненные блоки — как они выглядят в редакторе"
+    )
 
 
 class DraftFromIdeaPayload(BaseModel):
@@ -150,8 +152,24 @@ class DraftFromIdeaPayload(BaseModel):
 
 
 class AiRunPayload(BaseModel):
-    persona_type: str = Field(description="student — проверить постановку; reviewer — критерии")
+    persona_type: str = Field(
+        description="student — проверить постановку; reviewer — критерии; both — и то и другое"
+    )
+    samples: int = Field(
+        default=1, ge=1, le=5,
+        description="Сколько раз оценить каждое решение — чтобы увидеть разброс самой модели",
+    )
     idempotency_key: str | None = Field(default=None, max_length=64)
+
+
+class CriterionAssistPayload(BaseModel):
+    """Достроить критерий до применимого. Ответ — предложение, не запись."""
+
+    title: str = Field(min_length=1)
+    max_score: float = Field(gt=0, le=100)
+    student_hint: str = ""
+    description: str = ""
+    context: dict = Field(default_factory=dict)
 
 
 class RecommendationDecision(BaseModel):
@@ -971,6 +989,28 @@ def ai_fill(payload: AiFillPayload, user: User = Depends(methodist_guard)) -> di
     return {"field": payload.field, "proposed": out.get("proposed", ""), "note": out.get("note", "")}
 
 
+@router.post("/ai-criterion")
+def ai_criterion(payload: CriterionAssistPayload, user: User = Depends(methodist_guard)) -> dict:
+    """Достроить критерий: признаки сильного ответа и уровни с порогами.
+
+    Без них ревьюер не может поставить балл однозначно — и прогон валидации
+    возвращает это замечанием чаще всего остального. Дешевле попросить агента
+    сразу, чем чинить потом правкой по итогам прогона.
+    """
+
+    del user
+    feature(settings.feature_rubric_builder)
+    out = _engine_call(
+        task_ai.client().assist_criterion,
+        title=payload.title,
+        max_points=payload.max_score,
+        student_hint=payload.student_hint,
+        description=payload.description,
+        task_context={k: v for k, v in payload.context.items() if isinstance(v, str) and v},
+    )
+    return task_ai.from_engine_criterion(out)
+
+
 @router.post("/assignments/draft-from-idea", status_code=202)
 def draft_from_idea(payload: DraftFromIdeaPayload, user: User = Depends(methodist_guard)) -> dict:
     """Ставит сборку черновика в очередь и сразу отдаёт номер задачи.
@@ -1018,7 +1058,8 @@ def draft_from_idea_status(
         return {"status": "generating"}
     if state == "generation_failed":
         return {"status": "failed", "error": out.get("gen_error") or "Сборка черновика не удалась"}
-    return {"status": "ready", "draft": task_ai.draft_from_engine_task(out, track=track, total_points=total_points)}
+    draft = task_ai.draft_from_engine_task(out, track=track, total_points=total_points)
+    return {"status": "ready", "draft": draft}
 
 
 @router.post("/assignments/{assignment_id}/ai-runs", status_code=202)
@@ -1052,6 +1093,7 @@ def start_ai_run(
         persona_type=payload.persona_type,
         idempotency_key=payload.idempotency_key,
         created_by=user.id,
+        samples=payload.samples,
     )
     task_ai.start(db, run, background_tasks)
     return ai_run_data(run)

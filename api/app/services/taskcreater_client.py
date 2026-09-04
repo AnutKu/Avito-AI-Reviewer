@@ -27,7 +27,9 @@ class TaskCreaterClient:
         self.base_url = (base_url or settings.taskcreater_url).rstrip("/")
         self.timeout = timeout or settings.taskcreater_timeout_seconds
 
-    def _request(self, method: str, path: str, payload: dict | None = None, timeout: float | None = None) -> dict:
+    def _request(
+        self, method: str, path: str, payload: dict | None = None, timeout: float | None = None
+    ) -> dict:
         request = urllib.request.Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None,
@@ -64,6 +66,20 @@ class TaskCreaterClient:
             },
         )
 
+    def assist_criterion(self, *, title: str, max_points: float, student_hint: str = "",
+                         description: str = "", task_context: dict | None = None) -> dict:
+        return self._request(
+            "POST",
+            "/assist/criterion",
+            {
+                "title": title,
+                "max_points": max_points,
+                "student_hint": student_hint,
+                "description": description,
+                "task_context": task_context or {},
+            },
+        )
+
     # -- черновик из идеи -------------------------------------------------
     def generate_task(self, idea: dict) -> dict:
         """Ставит генерацию в очередь движка и сразу возвращает заготовку с id.
@@ -82,11 +98,13 @@ class TaskCreaterClient:
     def import_task(self, payload: dict) -> dict:
         return self._request("POST", "/tasks/import", payload)
 
-    def start_validation(self, task_id: str, *, persona_type: str, max_rounds: int = 1) -> dict:
+    def start_validation(
+        self, task_id: str, *, persona_type: str, max_rounds: int = 1, samples: int = 1
+    ) -> dict:
         return self._request(
             "POST",
             f"/tasks/{urllib.parse.quote(task_id)}/validate",
-            {"persona_type": persona_type, "max_rounds": max_rounds},
+            {"persona_type": persona_type, "max_rounds": max_rounds, "grader_samples": samples},
         )
 
     def get_run(self, run_id: str) -> dict:

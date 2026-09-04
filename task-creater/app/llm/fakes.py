@@ -407,12 +407,46 @@ def _fake_field_assist(system: str, user: str):
     return FieldAssistOut(field=field, proposed=proposed, note=note)
 
 
+def _fake_criterion(system: str, user: str):
+    """Офлайн-критерий: с признаками и уровнями — ровно то, чего требует промпт."""
+
+    del system
+    from app.schemas import Criterion, RubricLevel
+
+    title = _line_after(user, "Критерий:") or "Критерий"
+    try:
+        top = float(_line_after(user, "Максимум баллов:") or 5)
+    except ValueError:
+        top = 5.0
+    key = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:30] or "criterion"
+    return Criterion(
+        key=key,
+        title=title,
+        max_points=top,
+        student_hint=f"Оценивается {title.lower()}: полнота и обоснованность.",
+        description=f"Проверяемый признак по критерию «{title}»: наличие расчёта, обоснования и вывода.",
+        check_kind="subjective",
+        evidence_hint="раздел решения, относящийся к этому критерию",
+        expected_signals=[
+            "приведён расчёт с формулой и исходными числами",
+            "выбор обоснован сравнением с альтернативой",
+            "сформулирован вывод, а не пересказ данных",
+        ],
+        rubric_levels=[
+            RubricLevel(points=0.0, label="Не выполнено", descriptor="признаков в работе нет"),
+            RubricLevel(points=round(top / 2, 2), label="Частично", descriptor="есть расчёт без обоснования"),
+            RubricLevel(points=top, label="Полно", descriptor="есть расчёт, обоснование и вывод"),
+        ],
+    )
+
+
 _BUILDERS = {
     "GeneratedTask": _fake_generated_task,
     "SolverOutput": _fake_solver_output,
     "GraderOutput": _fake_grader_output,
     "CriticOutput": _fake_critic_output,
     "FieldAssistOut": _fake_field_assist,
+    "Criterion": _fake_criterion,
 }
 
 

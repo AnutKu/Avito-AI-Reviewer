@@ -16,7 +16,7 @@ from langgraph.types import Send
 
 from app.agents import roles
 from app.agents.personas import PERSONAS
-from app.graph.ops import apply_edits, build_score_matrix
+from app.graph.ops import apply_edits, build_score_matrix, build_score_samples
 from app.graph.runtime import ctx
 from app.graph.state import GraphState
 from app.schemas import CourseIdeaIn, RoundArtifact
@@ -91,6 +91,14 @@ async def dispatch_grade(_: GraphState) -> dict:
 
 
 def fan_graders(state: GraphState) -> list[Send]:
+    """По `grader_samples` оценок на каждое решение.
+
+    Повторная оценка одного и того же решения по одной и той же рубрике — это
+    замер стохастики самой модели: если баллы гуляют, дело не в решении, а в
+    формулировке критерия.
+    """
+
+    samples = max(1, int(state["config"].get("grader_samples", 1)))
     return [
         Send(
             "grade_one",
@@ -102,6 +110,7 @@ def fan_graders(state: GraphState) -> list[Send]:
             },
         )
         for sol in state["solutions"]
+        for _ in range(samples)
     ]
 
 
@@ -143,6 +152,7 @@ async def critic(state: GraphState) -> dict:
         findings=out.findings,
         proposed_edits=out.proposed_edits,
         score_matrix=build_score_matrix(working, gradings),
+        score_samples=build_score_samples(working, gradings),
         converged=out.converged,
         convergence_reason=out.convergence_reason,
     )
