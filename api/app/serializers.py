@@ -1,7 +1,17 @@
 from datetime import datetime
 from typing import Any
 
-from .models import AiSignal, Assignment, Review, ReviewItem, Submission
+from .config import settings
+from .models import (
+    AiDetection,
+    AiSignal,
+    Assignment,
+    BlitzSession,
+    Review,
+    ReviewItem,
+    Submission,
+)
+from .services.blitz_telemetry import FLAG_TITLES
 
 
 def iso(value: datetime | None) -> str | None:
@@ -68,6 +78,70 @@ def signal_data(signal: AiSignal) -> dict:
         "grounds": signal.grounds,
         "limitations": signal.limitations,
         "reviewer_decision": signal.reviewer_decision,
+    }
+
+
+def detection_data(detection: AiDetection | None) -> dict | None:
+    """Индекс отдаётся наружу только при достаточном покрытии.
+
+    Гейт стоит здесь, а не в интерфейсе: «мало данных» и «мало признаков» дают
+    одинаково низкое число, и показать его — значит соврать. Экран получает
+    reportable=false и печатает «признаков недостаточно», а не ноль.
+    """
+
+    if not detection:
+        return None
+    reportable = detection.status == "ready" and detection.confidence != "low"
+    return {
+        "id": str(detection.id),
+        "status": detection.status,
+        "score": int(detection.score) if reportable and detection.score is not None else None,
+        "category": detection.category if reportable else None,
+        "confidence": detection.confidence,
+        "coverage": detection.coverage,
+        "contributions": detection.contributions if reportable else [],
+        "summary": detection.summary,
+        "limitations": detection.limitations,
+        "error": detection.error,
+        "model": detection.model,
+        "reportable": reportable,
+        "blitz_threshold": settings.detection_blitz_threshold,
+        "created_at": iso(detection.created_at),
+    }
+
+
+# Поля вопроса, которые видит студент. Список закрытый и перечислен явно:
+# `expected_points` — это ответы на обороте, и утечь они могут ровно одним
+# способом — если вопрос отдать целиком.
+STUDENT_QUESTION_FIELDS = ("id", "type", "text")
+
+
+def student_question_data(question: dict) -> dict:
+    """Проекция вопроса для студента.
+
+    Белый список, а не удаление лишнего: при удалении новое поле в контракте
+    по умолчанию утекает, при белом списке — по умолчанию нет.
+    """
+
+    return {field: question.get(field, "") for field in STUDENT_QUESTION_FIELDS}
+
+
+def blitz_data(session: BlitzSession | None, telemetry: dict | None = None) -> dict | None:
+    """Полный вид опроса — только для ревьюера: здесь есть expected_points."""
+
+    if not session:
+        return None
+    return {
+        "id": str(session.id),
+        "status": session.status,
+        "questions": session.questions,
+        "answers": session.answers,
+        "ai_analysis": session.ai_analysis,
+        "telemetry": telemetry,
+        "telemetry_titles": FLAG_TITLES,
+        "sent_at": iso(session.sent_at),
+        "due_at": iso(session.due_at),
+        "answered_at": iso(session.answered_at),
     }
 
 

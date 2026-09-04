@@ -38,8 +38,10 @@ def _offline_github(monkeypatch):
         )
 
     monkeypatch.setattr(student, "fetch_github_snapshot", _fake)
-    # фоновый AI-прогон в тестах не нужен — он бы стучался в ai-reviewer и тормозил.
+    # фоновые AI-прогоны в тестах не нужны — они бы стучались в ai-reviewer и
+    # тормозили. Сдача ставит в очередь оба: ревью и детекцию.
     monkeypatch.setattr(student, "run_review", lambda review_id: None)
+    monkeypatch.setattr(student, "run_detection", lambda review_id: None)
 
 
 @pytest.fixture

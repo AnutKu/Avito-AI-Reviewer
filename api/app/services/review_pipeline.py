@@ -8,6 +8,10 @@
   считается мёртвой и переводится в `failed` (`fail_stale_reviews`);
 * при старте процесса все `running` осиротели по определению — прогон умер
   вместе с предыдущим процессом (`recover_orphaned_reviews`).
+
+Здесь же живёт вторая стадия — `run_detection`. Она ставится следующей задачей
+после ревью и наследует всю ту же защиту: свои повторы, свой sweep зависших, своё
+восстановление осиротевших. Прогоны независимы: падение одного не уносит второй.
 """
 
 import time
@@ -20,22 +24,33 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import SessionLocal
 from ..models import (
+    AiDetection,
     AiSignal,
     AiStatus,
     Assignment,
+    BlitzSession,
+    BlitzStatus,
+    DetectionCategory,
     LlmCall,
     Review,
     ReviewerAction,
     ReviewItem,
     RubricVersion,
     SignalDecision,
+    SignalKind,
     Snapshot,
     Submission,
+    SubmissionStatus,
 )
+from . import detection_scale
+from .status import transition
 from .ai_reviewer_client import (
     AiReviewerClient,
     AiReviewerError,
     AiReviewerNotConfigured,
+    BlitzAnalysisResponse,
+    BlitzQuestionsResponse,
+    DetectionResponse,
     ProviderMetadata,
     ReviewResponse,
 )
@@ -73,23 +88,31 @@ def persist_call(db: Session, review_id: UUID, stage: str, metadata: ProviderMet
     _record_call(db, review_id, stage, metadata)
 
 
-def running_since(review: Review) -> datetime:
+def running_since(row: Review | AiDetection) -> datetime:
     """Момент старта прогона. Пишется в raw_result, чтобы не заводить миграцию схемы."""
 
-    started = (review.raw_result or {}).get("started_at")
+    started = (row.raw_result or {}).get("started_at")
     if isinstance(started, str):
         try:
             return datetime.fromisoformat(started)
         except ValueError:
             pass
-    return review.created_at or datetime.now(UTC)
+    return row.created_at or datetime.now(UTC)
+
+
+def _stale(row: Review | AiDetection, status: str) -> bool:
+    if status != AiStatus.RUNNING:
+        return False
+    deadline = datetime.now(UTC) - timedelta(seconds=settings.ai_review_stale_after_seconds)
+    return running_since(row) < deadline
 
 
 def is_stale(review: Review) -> bool:
-    if review.ai_status != AiStatus.RUNNING:
-        return False
-    deadline = datetime.now(UTC) - timedelta(seconds=settings.ai_review_stale_after_seconds)
-    return running_since(review) < deadline
+    return _stale(review, review.ai_status)
+
+
+def is_stale_detection(detection: AiDetection) -> bool:
+    return _stale(detection, detection.status)
 
 
 def _mark_failed(review: Review, message: str) -> None:
@@ -112,6 +135,37 @@ def fail_stale_reviews(db: Session) -> int:
     return len(stale)
 
 
+def fail_stale_detections(db: Session) -> int:
+    """То же для прогонов детектора: они живут в тех же BackgroundTasks."""
+
+    stale = [
+        detection
+        for detection in db.scalars(select(AiDetection).where(AiDetection.status == AiStatus.RUNNING))
+        if is_stale_detection(detection)
+    ]
+    for detection in stale:
+        detection.status = AiStatus.FAILED
+        detection.error = STALE_ERROR
+    if stale:
+        db.commit()
+    return len(stale)
+
+
+def recover_orphaned_detections() -> int:
+    """Вызывается на старте приложения — по той же причине, что и для ревью."""
+
+    with SessionLocal() as db:
+        orphaned = list(
+            db.scalars(select(AiDetection).where(AiDetection.status == AiStatus.RUNNING))
+        )
+        for detection in orphaned:
+            detection.status = AiStatus.FAILED
+            detection.error = ORPHANED_ERROR
+        if orphaned:
+            db.commit()
+        return len(orphaned)
+
+
 def recover_orphaned_reviews() -> int:
     """Вызывается на старте приложения.
 
@@ -132,22 +186,13 @@ def recover_orphaned_reviews() -> int:
         return len(orphaned)
 
 
-def _review_with_retries(
-    *,
-    assignment: Assignment,
-    rubric: RubricVersion,
-    snapshot: Snapshot,
-) -> ReviewResponse:
+def _with_retries(call):
     """Повтор транзиентного отказа. Отсутствие ключа детерминировано — не повторяем."""
 
     attempts = max(1, settings.ai_review_max_attempts)
     for attempt in range(1, attempts + 1):
         try:
-            return AiReviewerClient().review(
-                assignment=assignment,
-                rubric=rubric,
-                snapshot=snapshot,
-            )
+            return call()
         except AiReviewerNotConfigured:
             raise
         except AiReviewerError:
@@ -155,6 +200,250 @@ def _review_with_retries(
                 raise
             time.sleep(settings.ai_review_retry_delay_seconds * attempt)
     raise AssertionError("недостижимо: цикл повторов всегда возвращает или бросает")
+
+
+def _review_with_retries(
+    *,
+    assignment: Assignment,
+    rubric: RubricVersion,
+    snapshot: Snapshot,
+) -> ReviewResponse:
+    return _with_retries(
+        lambda: AiReviewerClient().review(
+            assignment=assignment,
+            rubric=rubric,
+            snapshot=snapshot,
+        )
+    )
+
+
+def _detection_with_retries(*, assignment: Assignment, snapshot: Snapshot) -> DetectionResponse:
+    return _with_retries(
+        lambda: AiReviewerClient().detect(assignment=assignment, snapshot=snapshot)
+    )
+
+
+def blitz_questions_with_retries(
+    *, assignment: Assignment, snapshot: Snapshot, count: int, focus: list[str]
+) -> BlitzQuestionsResponse:
+    """Публичная: генерацию дёргает роутер синхронно, а не фоновая задача.
+
+    Ломается здесь ровно то же, что и в остальных стадиях: модель изредка
+    отдаёт ответ не по контракту — например, выкладывает expected_points
+    строкой вместо массива. Это промах выборки, а не отказ провайдера:
+    соседние вопросы в том же ответе приходят правильной формы. Ревьюеру,
+    который нажал кнопку и ждёт, показывать за это ошибку незачем.
+    """
+
+    return _with_retries(
+        lambda: AiReviewerClient().blitz_questions(
+            assignment=assignment, snapshot=snapshot, count=count, focus=focus
+        )
+    )
+
+
+SIGNAL_LEVEL_BY_CATEGORY = {
+    DetectionCategory.LIKELY_GENERATED: "high",
+    DetectionCategory.TOOL_ASSISTED: "medium",
+    DetectionCategory.NO_SIGNS: "low",
+}
+
+
+def _sync_ai_signal(
+    db: Session,
+    review: Review,
+    detection: AiDetection,
+    score: detection_scale.DetectionScore,
+) -> None:
+    """Единственное место, где рождается сигнал ai_use.
+
+    Раньше его порождало и общее ревью, и детектор; на экране это давало два
+    разных ответа об одной работе. Теперь ревью отвечает только за
+    understanding_risk, а этот сигнал — производная от прогона детектора.
+    """
+
+    for signal in list(review.signals):
+        if signal.kind == SignalKind.AI_USE:
+            db.delete(signal)
+    if not score.is_reportable:
+        return
+    grounds = [
+        f"{item.title} — подтверждённых мест: {len(item.evidence)}"
+        if item.evidence
+        else item.title
+        for item in score.contributions
+        if item.direction > 0
+    ]
+    grounds.append(f"Индекс признаков: {score.score} из 100 (шкала описана рядом с числом)")
+    db.add(
+        AiSignal(
+            review_id=review.id,
+            kind=SignalKind.AI_USE,
+            level=SIGNAL_LEVEL_BY_CATEGORY.get(score.category, "low"),
+            summary=detection.summary,
+            grounds=grounds,
+            limitations=detection.limitations,
+            reviewer_decision=SignalDecision.PENDING,
+        )
+    )
+
+
+def run_detection(review_id: UUID) -> None:
+    """Background task entry point. Ставится следующей задачей после run_review.
+
+    Отдельный прогон, а не два поля в ревью: у детекции другой вход, другой промпт
+    и другая цена перезапуска — смешать их значило бы переоценивать всю рубрику
+    ради повторной проверки одного сигнала.
+    """
+
+    if not settings.feature_ai_detection:
+        return
+    with SessionLocal() as db:
+        review = db.get(Review, review_id)
+        if not review:
+            return
+        detection = AiDetection(
+            review_id=review.id,
+            status=AiStatus.RUNNING,
+            model=settings.ai_reviewer_model,
+            raw_result={"started_at": datetime.now(UTC).isoformat()},
+        )
+        db.add(detection)
+        db.commit()
+        detection_id = detection.id
+
+        try:
+            submission = db.get(Submission, review.submission_id)
+            snapshot = db.query(Snapshot).filter(Snapshot.submission_id == submission.id).one()
+            assignment = db.get(Assignment, submission.assignment_id)
+            response = _detection_with_retries(assignment=assignment, snapshot=snapshot)
+            score = detection_scale.compute(
+                parsed_facts=snapshot.parsed_facts,
+                snapshot_content=snapshot.content,
+                indicators=[item.model_dump() for item in response.result.indicators],
+            )
+            detection.score = score.score
+            detection.coverage = score.coverage
+            detection.confidence = score.confidence
+            detection.category = score.category
+            detection.contributions = [item.as_dict() for item in score.contributions]
+            detection.summary = response.result.summary
+            detection.limitations = response.result.limitations
+            detection.model = response.metadata.model
+            detection.status = AiStatus.READY
+            detection.raw_result = {
+                **(detection.raw_result or {}),
+                "provider": response.metadata.provider,
+                "request_id": response.metadata.request_id,
+            }
+            _record_call(db, review.id, "ai_detection", response.metadata)
+            _sync_ai_signal(db, review, detection, score)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            detection = db.get(AiDetection, detection_id)
+            if detection:
+                detection.status = AiStatus.FAILED
+                detection.error = str(exc)[:2000]
+                db.commit()
+
+
+def expire_blitz_sessions(db: Session) -> int:
+    """Отправленный опрос, переживший свой срок, закрывается.
+
+    Подметается при чтении очереди, как и зависшие прогоны: планировщика нет, а
+    висящий «ожидает ответа» блокирует ревьюеру завершение работы навсегда.
+
+    Закрыть опрос мало — работу надо вернуть ревьюеру. Завершение разрешено из
+    `in_review` и `blitz_answered`, так что оставшийся `blitz_sent` держал бы её
+    ровно так же, как держал незакрытый опрос. Переход обратно в `in_review`
+    предусмотрен потоком статусов: студент не ответил — ход снова за человеком.
+    """
+
+    now = datetime.now(UTC)
+    expired = [
+        session
+        for session in db.scalars(
+            select(BlitzSession).where(BlitzSession.status == BlitzStatus.SENT)
+        )
+        if session.due_at and session.due_at < now
+    ]
+    for session in expired:
+        session.status = BlitzStatus.EXPIRED
+        review = db.get(Review, session.review_id)
+        submission = db.get(Submission, review.submission_id) if review else None
+        if submission and submission.status == SubmissionStatus.BLITZ_SENT:
+            transition(
+                db, submission, SubmissionStatus.IN_REVIEW, comment="Срок ответа на блиц истёк"
+            )
+    if expired:
+        db.commit()
+    return len(expired)
+
+
+def _blitz_analysis_with_retries(
+    *, assignment: Assignment, questions: list[dict], answers: list[dict]
+) -> BlitzAnalysisResponse:
+    return _with_retries(
+        lambda: AiReviewerClient().blitz_analysis(
+            assignment=assignment, questions=questions, answers=answers
+        )
+    )
+
+
+def run_blitz_analysis(session_id: UUID) -> None:
+    """Background task entry point. Ставится после ответа студента.
+
+    Телеметрия в разбор НЕ передаётся: как студент себя вёл и что он написал —
+    разные свидетельства, и модель не должна подкрашивать одно другим.
+    Ревьюер видит их рядом и взвешивает сам.
+    """
+
+    if not settings.feature_blitz:
+        return
+    with SessionLocal() as db:
+        session = db.get(BlitzSession, session_id)
+        if not session or not session.questions:
+            return
+        session.ai_analysis = {
+            "status": AiStatus.RUNNING,
+            "started_at": datetime.now(UTC).isoformat(),
+        }
+        db.commit()
+
+        try:
+            review = db.get(Review, session.review_id)
+            submission = db.get(Submission, review.submission_id)
+            assignment = db.get(Assignment, submission.assignment_id)
+            response = _blitz_analysis_with_retries(
+                assignment=assignment,
+                questions=session.questions,
+                answers=[
+                    {
+                        "question_id": str(item.get("question_id", "")),
+                        "text": str(item.get("text") or ""),
+                    }
+                    for item in session.answers
+                ],
+            )
+            session.ai_analysis = {
+                "status": AiStatus.READY,
+                "assessments": [item.model_dump() for item in response.result.assessments],
+                "summary": response.result.summary,
+                "limitations": response.result.limitations,
+                "model": response.metadata.model,
+            }
+            _record_call(db, review.id, "blitz_analysis", response.metadata)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            session = db.get(BlitzSession, session_id)
+            if session:
+                session.ai_analysis = {
+                    "status": AiStatus.FAILED,
+                    "error": str(exc)[:2000],
+                }
+                db.commit()
 
 
 def run_review(review_id: UUID) -> None:

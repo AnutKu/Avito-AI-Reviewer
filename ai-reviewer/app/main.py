@@ -1,7 +1,18 @@
 from fastapi import FastAPI, HTTPException
 
 from .config import settings
-from .contracts import FeedbackRequest, FeedbackResponse, ReviewRequest, ReviewResponse
+from .contracts import (
+    BlitzAnalysisRequest,
+    BlitzAnalysisResponse,
+    BlitzQuestionsRequest,
+    BlitzQuestionsResponse,
+    DetectionRequest,
+    DetectionResponse,
+    FeedbackRequest,
+    FeedbackResponse,
+    ReviewRequest,
+    ReviewResponse,
+)
 from .reviewer import ZaiInvalidResponse, ZaiNotConfigured, ZaiReviewer
 
 
@@ -27,6 +38,42 @@ def health() -> dict:
 def create_review(payload: ReviewRequest) -> ReviewResponse:
     try:
         return ZaiReviewer().review(payload)
+    except ZaiNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ZaiInvalidResponse as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Ошибка провайдера Z.AI: {exc}") from exc
+
+
+@app.post("/v1/ai-detection", response_model=DetectionResponse, tags=["detection"])
+def detect(payload: DetectionRequest) -> DetectionResponse:
+    try:
+        return ZaiReviewer().detect(payload)
+    except ZaiNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ZaiInvalidResponse as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Ошибка провайдера Z.AI: {exc}") from exc
+
+
+@app.post("/v1/blitz/questions", response_model=BlitzQuestionsResponse, tags=["blitz"])
+def blitz_questions(payload: BlitzQuestionsRequest) -> BlitzQuestionsResponse:
+    try:
+        return ZaiReviewer().blitz_questions(payload)
+    except ZaiNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ZaiInvalidResponse as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Ошибка провайдера Z.AI: {exc}") from exc
+
+
+@app.post("/v1/blitz/analysis", response_model=BlitzAnalysisResponse, tags=["blitz"])
+def blitz_analysis(payload: BlitzAnalysisRequest) -> BlitzAnalysisResponse:
+    try:
+        return ZaiReviewer().blitz_analysis(payload)
     except ZaiNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ZaiInvalidResponse as exc:

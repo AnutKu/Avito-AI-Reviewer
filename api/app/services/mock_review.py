@@ -139,24 +139,32 @@ def fill_demo_review(db: Session, review: Review, quality: float = 1.0) -> Revie
     return review
 
 
-def blitz_questions() -> list[dict]:
+def demo_blitz_questions() -> list[dict]:
+    """Фикстура для seed, а не мок модуля: вопросы генерирует модель.
+
+    Форма совпадает с контрактом `BlitzQuestion` — иначе засеянная сессия
+    развалила бы разбор и проекцию для студента на первом же открытии.
+    """
+
     return [
         {
             "id": "q1",
             "type": "explain_choice",
             "text": "Почему для итоговой модели вы выбрали Random Forest, а не модель с лучшим recall?",
-            "selected": True,
+            "anchor": "Ячейка 22",
+            "expected_points": [
+                "названа цена ошибки в задаче, а не только значение метрики",
+                "видно, что сравнение метрик было осознанным",
+            ],
         },
         {
             "id": "q2",
             "type": "what_if",
             "text": "Что изменится в результатах, если убрать фиксацию random_state?",
-            "selected": True,
-        },
-        {
-            "id": "q3",
-            "type": "change_solution",
-            "text": "Как бы вы зарегистрировали лучшую модель в MLflow Model Registry?",
-            "selected": False,
+            "anchor": "Ячейка 7",
+            "expected_points": [
+                "разброс между запусками, а не «ничего не изменится»",
+                "связь с воспроизводимостью эксперимента",
+            ],
         },
     ]

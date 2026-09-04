@@ -46,7 +46,8 @@ class CriterionResult(ContractModel):
 
 
 class SignalResult(ContractModel):
-    kind: Literal["ai_use", "understanding_risk"]
+    # ai_use сюда больше не приходит: сигнал целиком принадлежит детектору.
+    kind: Literal["understanding_risk"]
     level: Literal["high", "medium", "low"]
     summary: str
     grounds: list[str]
@@ -71,6 +72,62 @@ class ProviderMetadata(ContractModel):
 
 class ReviewResponse(ContractModel):
     result: ReviewResult
+    metadata: ProviderMetadata
+
+
+class DetectionIndicator(ContractModel):
+    key: str
+    evidence: list[EvidenceResult]
+    note: str
+
+
+class DetectionResult(ContractModel):
+    """Ни score, ни probability: индекс считает services/detection_scale.py."""
+
+    indicators: list[DetectionIndicator] = Field(default_factory=list)
+    summary: str
+    limitations: str
+
+
+class DetectionResponse(ContractModel):
+    result: DetectionResult
+    metadata: ProviderMetadata
+
+
+class BlitzQuestion(ContractModel):
+    """`expected_points` не покидает контур ревьюера — см. student.py."""
+
+    id: str
+    type: str
+    text: str
+    anchor: str
+    expected_points: list[str]
+
+
+class BlitzQuestionsResult(ContractModel):
+    questions: list[BlitzQuestion]
+
+
+class BlitzQuestionsResponse(ContractModel):
+    result: BlitzQuestionsResult
+    metadata: ProviderMetadata
+
+
+class AnswerAssessment(ContractModel):
+    question_id: str
+    verdict: Literal["consistent", "partial", "inconsistent", "empty"]
+    grounds: list[str] = Field(default_factory=list)
+    note: str
+
+
+class BlitzAnalysisResult(ContractModel):
+    assessments: list[AnswerAssessment]
+    summary: str
+    limitations: str
+
+
+class BlitzAnalysisResponse(ContractModel):
+    result: BlitzAnalysisResult
     metadata: ProviderMetadata
 
 
@@ -129,6 +186,65 @@ class AiReviewerClient:
             },
         }
         return ReviewResponse.model_validate(self._request("/v1/reviews", payload))
+
+    def detect(self, *, assignment: Assignment, snapshot: Snapshot) -> DetectionResponse:
+        payload = {
+            "assignment": {
+                "title": assignment.title,
+                "statement": assignment.statement,
+                "tone_of_voice": assignment.course.tone_of_voice,
+            },
+            "snapshot": {
+                "content": snapshot.content,
+                "parsed_facts": snapshot.parsed_facts,
+            },
+        }
+        return DetectionResponse.model_validate(self._request("/v1/ai-detection", payload))
+
+    def blitz_questions(
+        self,
+        *,
+        assignment: Assignment,
+        snapshot: Snapshot,
+        count: int,
+        focus: list[str],
+    ) -> BlitzQuestionsResponse:
+        payload = {
+            "assignment": {
+                "title": assignment.title,
+                "statement": assignment.statement,
+                "tone_of_voice": assignment.course.tone_of_voice,
+            },
+            "snapshot": {
+                "content": snapshot.content,
+                "parsed_facts": snapshot.parsed_facts,
+            },
+            "count": count,
+            "focus": focus,
+        }
+        return BlitzQuestionsResponse.model_validate(
+            self._request("/v1/blitz/questions", payload)
+        )
+
+    def blitz_analysis(
+        self,
+        *,
+        assignment: Assignment,
+        questions: list[dict],
+        answers: list[dict],
+    ) -> BlitzAnalysisResponse:
+        payload = {
+            "assignment": {
+                "title": assignment.title,
+                "statement": assignment.statement,
+                "tone_of_voice": assignment.course.tone_of_voice,
+            },
+            "questions": questions,
+            "answers": answers,
+        }
+        return BlitzAnalysisResponse.model_validate(
+            self._request("/v1/blitz/analysis", payload)
+        )
 
     def rewrite_feedback(
         self,

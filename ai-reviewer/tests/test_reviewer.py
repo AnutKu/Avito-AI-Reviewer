@@ -9,15 +9,29 @@ from app.reviewer import ZaiInvalidResponse, ZaiNotConfigured, ZaiReviewer
 
 
 class FakeCompletions:
+    """Список ответов — по одному на вызов; последний повторяется.
+
+    Вызовов стало больше одного: ответ не по контракту модель чинит следующим
+    сообщением. `kwargs` остаётся последним вызовом, `calls` хранит все.
+    """
+
     def __init__(self, content):
-        self.content = content
-        self.kwargs = None
+        self.contents = [content] if isinstance(content, str) else list(content)
+        self.calls = []
+
+    @property
+    def content(self):
+        return self.contents[min(len(self.calls) - 1, len(self.contents) - 1)]
+
+    @property
+    def kwargs(self):
+        return self.calls[-1] if self.calls else None
 
     def create(self, **kwargs):
-        self.kwargs = kwargs
+        self.calls.append(kwargs)
         return SimpleNamespace(
             model="glm-5.3-flash",
-            request_id="request-test",
+            request_id=f"request-test-{len(self.calls)}",
             choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
             usage=SimpleNamespace(prompt_tokens=100, completion_tokens=50),
         )

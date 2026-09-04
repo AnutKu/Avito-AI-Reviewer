@@ -21,7 +21,7 @@ from .models import (
     SubmissionStatus,
     User,
 )
-from .services.mock_review import blitz_questions, fill_demo_review
+from .services.mock_review import demo_blitz_questions, fill_demo_review
 
 
 def seed_demo(db: Session) -> None:
@@ -199,7 +199,7 @@ def seed_demo(db: Session) -> None:
                 BlitzSession(
                     review_id=review.id,
                     status=BlitzStatus.SENT,
-                    questions=blitz_questions()[:2],
+                    questions=demo_blitz_questions(),
                     sent_at=now - timedelta(hours=4),
                     due_at=now + timedelta(hours=44),
                 )

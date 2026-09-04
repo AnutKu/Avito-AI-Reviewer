@@ -10,6 +10,7 @@ from app.services.ai_reviewer_client import (
 )
 from app.services.review_pipeline import (
     _review_with_retries,
+    blitz_questions_with_retries,
     is_stale,
     running_since,
 )
@@ -103,6 +104,51 @@ class ReviewRetryTest(unittest.TestCase):
             self.run_with(AiReviewerUnavailable("сеть"), attempts=3)
 
         self.assertEqual(self.attempts_made, 3)
+
+
+class BlitzQuestionsRetryTest(unittest.TestCase):
+    """Генерация вопросов идёт синхронно из роутера и раньше повторов не имела.
+
+    Первый же живой прогон это и поймал: модель отдала два вопроса правильной
+    формы и один — нет, а ревьюер увидел красную ошибку вместо черновика.
+    """
+
+    def setUp(self):
+        self.kwargs = {"assignment": Mock(), "snapshot": Mock(), "count": 3, "focus": []}
+        delay = patch("app.services.review_pipeline.settings.ai_review_retry_delay_seconds", 0)
+        delay.start()
+        self.addCleanup(delay.stop)
+
+    def run_with(self, side_effect, attempts=2):
+        client = Mock()
+        client.blitz_questions = Mock(side_effect=side_effect)
+        with (
+            patch("app.services.review_pipeline.AiReviewerClient", return_value=client),
+            patch("app.services.review_pipeline.settings.ai_review_max_attempts", attempts),
+        ):
+            try:
+                return client, blitz_questions_with_retries(**self.kwargs)
+            finally:
+                self.attempts_made = client.blitz_questions.call_count
+
+    def test_response_off_contract_is_retried(self):
+        client, result = self.run_with(
+            [AiReviewerError("Ответ Z.AI не соответствует контракту"), "ok"]
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(client.blitz_questions.call_count, 2)
+
+    def test_missing_api_key_is_not_retried(self):
+        with self.assertRaises(AiReviewerNotConfigured):
+            self.run_with(AiReviewerNotConfigured("ZAI_API_KEY не настроен"))
+
+        self.assertEqual(self.attempts_made, 1)
+
+    def test_the_reviewer_still_sees_a_failure_that_keeps_repeating(self):
+        # Повтор прячет промах выборки, а не сломанного провайдера.
+        with self.assertRaises(AiReviewerError):
+            self.run_with(AiReviewerError("контракт"))
 
 
 if __name__ == "__main__":
