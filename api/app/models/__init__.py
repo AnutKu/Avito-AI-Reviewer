@@ -16,10 +16,13 @@ from .core import (
     Submission,
     User,
 )
+from .detection import AiDetection, FraudDecision
 from .enums import (
     AiStatus,
     BlitzStatus,
     Confidence,
+    DetectionCategory,
+    FraudVerdict,
     NotificationChannel,
     ReviewerAction,
     Role,
@@ -31,6 +34,7 @@ from .enums import (
 )
 
 __all__ = [
+    "AiDetection",
     "AiSignal",
     "AiStatus",
     "Assignment",
@@ -39,7 +43,10 @@ __all__ = [
     "BlitzStatus",
     "Confidence",
     "Course",
+    "DetectionCategory",
     "Enrollment",
+    "FraudDecision",
+    "FraudVerdict",
     "LlmCall",
     "Notification",
     "NotificationChannel",

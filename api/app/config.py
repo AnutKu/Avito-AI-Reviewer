@@ -29,12 +29,20 @@ class Settings(BaseSettings):
     ai_review_retry_delay_seconds: float = 3.0
     ai_review_stale_after_seconds: float = 600.0
 
+    # Детекция. Веса признаков лежат в services/detection_scale.py — здесь только
+    # переопределения: калибровать шкалу приходится под курс, а пересобирать образ
+    # ради одного числа не нужно. Порог, с которого интерфейс ПРЕДЛАГАЕТ блиц
+    # (FR-047) — не порог санкции: балл от индекса не зависит никогда (FR-045).
+    detection_weights: dict[str, float] = {}
+    detection_blitz_threshold: int = 70
+
     # Фиче-флаги. Выключенный раздел не появляется в навигации — кабинет
     # всегда выглядит целым, порядок отказа применяется конфигом, не вырезкой кода.
     feature_distribution: bool = True
     feature_rubric_builder: bool = True
     feature_analytics: bool = True
     feature_blitz: bool = True
+    feature_ai_detection: bool = True
     feature_course_debt: bool = False
     feature_telegram: bool = False
 
@@ -44,6 +52,7 @@ class Settings(BaseSettings):
             "rubric_builder": self.feature_rubric_builder,
             "analytics": self.feature_analytics,
             "blitz": self.feature_blitz,
+            "ai_detection": self.feature_ai_detection,
             "course_debt": self.feature_course_debt,
             "telegram": self.feature_telegram,
         }

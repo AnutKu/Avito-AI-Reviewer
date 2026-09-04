@@ -46,7 +46,8 @@ class CriterionResult(ContractModel):
 
 
 class SignalResult(ContractModel):
-    kind: Literal["ai_use", "understanding_risk"]
+    # ai_use сюда больше не приходит: сигнал целиком принадлежит детектору.
+    kind: Literal["understanding_risk"]
     level: Literal["high", "medium", "low"]
     summary: str
     grounds: list[str]
@@ -71,6 +72,25 @@ class ProviderMetadata(ContractModel):
 
 class ReviewResponse(ContractModel):
     result: ReviewResult
+    metadata: ProviderMetadata
+
+
+class DetectionIndicator(ContractModel):
+    key: str
+    evidence: list[EvidenceResult]
+    note: str
+
+
+class DetectionResult(ContractModel):
+    """Ни score, ни probability: индекс считает services/detection_scale.py."""
+
+    indicators: list[DetectionIndicator] = Field(default_factory=list)
+    summary: str
+    limitations: str
+
+
+class DetectionResponse(ContractModel):
+    result: DetectionResult
     metadata: ProviderMetadata
 
 
@@ -129,6 +149,20 @@ class AiReviewerClient:
             },
         }
         return ReviewResponse.model_validate(self._request("/v1/reviews", payload))
+
+    def detect(self, *, assignment: Assignment, snapshot: Snapshot) -> DetectionResponse:
+        payload = {
+            "assignment": {
+                "title": assignment.title,
+                "statement": assignment.statement,
+                "tone_of_voice": assignment.course.tone_of_voice,
+            },
+            "snapshot": {
+                "content": snapshot.content,
+                "parsed_facts": snapshot.parsed_facts,
+            },
+        }
+        return DetectionResponse.model_validate(self._request("/v1/ai-detection", payload))
 
     def rewrite_feedback(
         self,

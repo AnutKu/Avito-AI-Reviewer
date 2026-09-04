@@ -51,32 +51,60 @@ def _repository(url: str) -> tuple[str, str]:
     return owner, repository
 
 
-def _notebook_text(path: str, raw: bytes) -> tuple[str, list[int], int]:
+def _cell_source(cell: dict) -> str:
+    source = cell.get("source", "")
+    return "".join(source) if isinstance(source, list) else str(source)
+
+
+def _notebook_text(path: str, raw: bytes) -> tuple[str, dict]:
+    """Текст ноутбука и факты по нему.
+
+    Факты считаются на один ноутбук, а не на репозиторий: счётчики выполнения
+    двух разных файлов в одном списке дают ложный «непорядок» на стыке.
+    """
+
     try:
         notebook = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise GithubSnapshotError(f"Не удалось прочитать notebook {path}") from exc
     chunks = [f"# Файл: {path}"]
     execution_counts: list[int] = []
-    failed_cells = 0
+    facts = {
+        "path": path,
+        "code_cells": 0,
+        "markdown_cells": 0,
+        "code_chars": 0,
+        "markdown_chars": 0,
+        "unrun_cells": 0,
+        "failed_cells": 0,
+    }
     for index, cell in enumerate(notebook.get("cells", []), start=1):
         cell_type = cell.get("cell_type", "unknown")
         execution_count = cell.get("execution_count")
-        if isinstance(execution_count, int):
-            execution_counts.append(execution_count)
+        source = _cell_source(cell)
+        if cell_type == "code":
+            facts["code_cells"] += 1
+            facts["code_chars"] += len(source)
+            if isinstance(execution_count, int):
+                execution_counts.append(execution_count)
+            else:
+                facts["unrun_cells"] += 1
+        elif cell_type == "markdown":
+            facts["markdown_cells"] += 1
+            facts["markdown_chars"] += len(source)
         chunks.append(
             f"\n## Ячейка {index} · {cell_type}"
             + (f" · execution_count={execution_count}" if execution_count is not None else "")
         )
-        source = cell.get("source", "")
-        chunks.append("".join(source) if isinstance(source, list) else str(source))
+        chunks.append(source)
         for output in cell.get("outputs", []):
             if output.get("output_type") == "error":
-                failed_cells += 1
+                facts["failed_cells"] += 1
                 chunks.append(
                     f"[Ошибка: {output.get('ename', '')}: {output.get('evalue', '')}]"
                 )
-    return "\n".join(chunks), execution_counts, failed_cells
+    facts["execution_counts"] = execution_counts
+    return "\n".join(chunks), facts
 
 
 def build_snapshot(archive: bytes, max_chars: int | None = None) -> GithubSnapshot:
@@ -89,7 +117,7 @@ def build_snapshot(archive: bytes, max_chars: int | None = None) -> GithubSnapsh
     limit = settings.max_snapshot_chars if max_chars is None else max_chars
     sections: list[str] = []
     used = 0
-    execution_counts: list[int] = []
+    notebooks: list[dict] = []
     failed_cells = 0
     included_files: list[str] = []
     omitted_files: list[str] = []
@@ -113,14 +141,15 @@ def build_snapshot(archive: bytes, max_chars: int | None = None) -> GithubSnapsh
             omitted_files.append(relative)
             continue
         raw = bundle.read(info)
+        notebook_facts: dict | None = None
         if path.suffix.lower() == ".ipynb":
-            text, counts, errors = _notebook_text(relative, raw)
+            text, notebook_facts = _notebook_text(relative, raw)
         else:
             try:
                 decoded = raw.decode("utf-8")
             except UnicodeDecodeError:
                 continue
-            text, counts, errors = f"# Файл: {relative}\n\n{decoded}", [], 0
+            text = f"# Файл: {relative}\n\n{decoded}"
         # used считает длину итогового content вместе с разделителями, поэтому
         # snapshot_chars в фактах никогда не превысит snapshot_limit.
         separator = len(SECTION_SEPARATOR) if sections else 0
@@ -135,8 +164,9 @@ def build_snapshot(archive: bytes, max_chars: int | None = None) -> GithubSnapsh
         sections.append(text)
         used += separator + len(text)
         included_files.append(relative)
-        execution_counts.extend(counts)
-        failed_cells += errors
+        if notebook_facts is not None:
+            notebooks.append(notebook_facts)
+            failed_cells += notebook_facts["failed_cells"]
 
     if not sections:
         raise GithubSnapshotError("В репозитории нет поддерживаемых текстовых файлов")
@@ -148,7 +178,10 @@ def build_snapshot(archive: bytes, max_chars: int | None = None) -> GithubSnapsh
     )
     facts = {
         "files": included_files,
-        "notebook_execution_counts": execution_counts,
+        # По одному объекту на ноутбук: детектор (services/detection_scale.py) считает
+        # по ним величину признаков процесса, а на плоском списке счётчиков со всего
+        # репозитория «непорядок выполнения» появлялся бы на каждом стыке файлов.
+        "notebooks": notebooks,
         "runs_in_code": run_markers,
         "metrics": metrics,
         "seed_fixed": bool(re.search(r"(random_state|seed)\s*=\s*\d+", lowered)),

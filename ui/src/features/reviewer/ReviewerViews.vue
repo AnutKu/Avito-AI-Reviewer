@@ -73,6 +73,26 @@ async function rerun() {
   } catch (e) { error.value = e.message }
 }
 
+const CATEGORY_TITLES = {
+  no_signs: 'Признаков не наблюдается',
+  tool_assisted: 'Похоже на использование AI как инструмента',
+  likely_generated: 'Похоже на сгенерированное решение',
+}
+
+const CONFIDENCE_TITLES = {
+  high: 'Высокая — было что наблюдать',
+  medium: 'Средняя — часть признаков недоступна',
+  low: 'Низкая — наблюдать почти нечего',
+}
+
+async function rerunDetection() {
+  try {
+    await api(`/reviewer/reviews/${current.value.review.id}/detect`, { method: 'POST' })
+    current.value.detection = { ...(current.value.detection || {}), status: 'running' }
+    notice.value = 'Проверка на признаки AI перезапущена'
+  } catch (e) { error.value = e.message }
+}
+
 async function sendBlitz() {
   try {
     const questions = current.value.suggested_questions
@@ -123,6 +143,40 @@ onMounted(loadQueue)
         <div v-if="current.review.is_demo" class="fixture-note">Эта карточка — неизменяемый демонстрационный пример. Новые сдачи проверяются реальной моделью Z.AI.</div>
         <div v-if="current.review.ai_status === 'failed'" class="toast-error">Z.AI: {{ current.review.ai_error }}</div>
         <section class="attention-panel"><h3><span>!</span> Панель внимания</h3><p>Проверьте критерии с низкой уверенностью и отдельный AI-сигнал.</p></section>
+
+        <section v-if="current.detection" class="review-section detection-panel">
+          <div class="section-title"><h2>Признаки использования AI</h2><span>На балл не влияет</span></div>
+          <p v-if="current.detection.status === 'running'" class="muted">Проверка выполняется…</p>
+          <p v-else-if="current.detection.status === 'failed'" class="toast-error">Проверка не выполнена: {{ current.detection.error }}</p>
+          <template v-else>
+            <div class="detection-head">
+              <div class="detection-score" :class="current.detection.reportable ? current.detection.category : 'unknown'">
+                <b>{{ current.detection.reportable ? current.detection.score : '—' }}</b><small>{{ current.detection.reportable ? 'из 100' : 'нет данных' }}</small>
+              </div>
+              <div class="detection-meta">
+                <b>{{ current.detection.reportable ? CATEGORY_TITLES[current.detection.category] : 'Признаков недостаточно для оценки' }}</b>
+                <span class="confidence" :class="current.detection.confidence">{{ CONFIDENCE_TITLES[current.detection.confidence] }}</span>
+                <small v-if="current.detection.reportable">Индекс признаков, а не вероятность: 30 — ничего не наблюдали, ниже — следы ручной работы, выше — следы генерации. Считается детерминированно, раскладку видно ниже.</small>
+                <small v-else>Покрытие {{ Math.round(current.detection.coverage * 100) }}% — короткая работа или обрезанный снапшот. Число не показываем: «мало данных» и «мало признаков» дают одинаково низкую отметку.</small>
+              </div>
+              <button class="ai-rerun" :disabled="current.submission.status === 'completed'" @click="rerunDetection">↻ Перепроверить</button>
+            </div>
+            <p v-if="current.detection.summary" class="detection-summary">{{ current.detection.summary }}</p>
+            <div v-for="item in current.detection.contributions" :key="item.key" class="detection-row" :class="item.direction > 0 ? 'up' : 'down'">
+              <span class="detection-points">{{ item.points > 0 ? '+' : '' }}{{ item.points }}</span>
+              <span class="detection-body">
+                <b>{{ item.title }}</b>
+                <small>вес {{ item.weight }} × величина {{ item.magnitude }}{{ item.direction > 0 ? '' : ' · свидетельство ручной работы' }}</small>
+                <em v-for="proof in item.evidence" :key="proof.quote">«{{ proof.quote }}» <i>{{ proof.anchor }}</i></em>
+              </span>
+            </div>
+            <div v-if="current.detection.reportable && current.detection.score >= current.detection.blitz_threshold" class="attention-panel">
+              <h3><span>?</span> Стоит задать вопросы по работе</h3>
+              <p>Индекс выше порога {{ current.detection.blitz_threshold }}. Это повод проверить понимание, а не снизить балл: решение о баллах принимаете вы и только по критериям.</p>
+            </div>
+            <details v-if="current.detection.limitations"><summary>Ограничения метода</summary><p>{{ current.detection.limitations }}</p></details>
+          </template>
+        </section>
         <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} решено</span></div>
           <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">
             <header><div><span class="confidence" :class="item.confidence">{{ item.confidence === 'high' ? 'Высокая' : item.confidence === 'medium' ? 'Средняя' : 'Низкая' }}</span><h3>{{ item.criterion_title }}</h3></div><strong>{{ item.ai_score }} <small>/ {{ item.max_score }}</small></strong></header>

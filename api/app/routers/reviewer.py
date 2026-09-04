@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import get_db
 from ..models import (
+    AiDetection,
     AiSignal,
     BlitzSession,
     BlitzStatus,
@@ -26,7 +27,7 @@ from ..models import (
     User,
 )
 from ..security import require
-from ..serializers import iso, review_data, submission_data
+from ..serializers import detection_data, iso, review_data, submission_data
 from ..services.mock_review import blitz_questions
 from ..services.status import overdue_risk, transition
 from ..services.ai_reviewer_client import (
@@ -34,7 +35,15 @@ from ..services.ai_reviewer_client import (
     AiReviewerError,
     AiReviewerUnavailable,
 )
-from ..services.review_pipeline import fail_stale_reviews, is_stale, persist_call, run_review
+from ..services.review_pipeline import (
+    fail_stale_detections,
+    fail_stale_reviews,
+    is_stale,
+    is_stale_detection,
+    persist_call,
+    run_detection,
+    run_review,
+)
 
 router = APIRouter(prefix="/reviewer", tags=["reviewer"])
 reviewer_guard = require(Role.REVIEWER)
@@ -85,6 +94,7 @@ def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -
     # Планировщика нет: зависшие прогоны подметаются при чтении очереди, чтобы
     # ревьюер видел failed с понятной причиной, а не вечное «Проверка выполняется…».
     fail_stale_reviews(db)
+    fail_stale_detections(db)
     rows = db.execute(
         select(Submission, ReviewAssignment)
         .join(ReviewAssignment, ReviewAssignment.submission_id == Submission.id)
@@ -119,6 +129,7 @@ def review_screen(
     # То же, что в очереди: иначе зависшая запись оставит экран в состоянии
     # «Проверка выполняется…» с заблокированным перезапуском.
     fail_stale_reviews(db)
+    fail_stale_detections(db)
     if submission.status == SubmissionStatus.ASSIGNED:
         transition(db, submission, SubmissionStatus.IN_REVIEW, user, "Ревьюер открыл работу")
         db.commit()
@@ -126,8 +137,14 @@ def review_screen(
     blitz = db.scalar(
         select(BlitzSession).where(BlitzSession.review_id == review.id).order_by(BlitzSession.created_at.desc())
     )
+    detection = db.scalar(
+        select(AiDetection)
+        .where(AiDetection.review_id == review.id)
+        .order_by(AiDetection.created_at.desc())
+    ) if settings.feature_ai_detection else None
     return {
         "submission": submission_data(submission, user.full_name),
+        "detection": detection_data(detection),
         "snapshot": {
             "content": snapshot.content if snapshot else "",
             "parsed_facts": snapshot.parsed_facts if snapshot else {},
@@ -300,7 +317,39 @@ def rerun_review(
     review.ai_error = None
     db.commit()
     background_tasks.add_task(run_review, review.id)
+    # Детекция ставится следующей задачей, а не внутри run_review: прогоны
+    # независимы, и падение одного не должно уносить второй.
+    background_tasks.add_task(run_detection, review.id)
     return {"review_id": str(review.id), "ai_status": review.ai_status}
+
+
+@router.post("/reviews/{review_id}/detect", status_code=202)
+def rerun_detection(
+    review_id: UUID,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(reviewer_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Перезапуск только детекции — рубрика при этом не переоценивается."""
+
+    if not settings.feature_ai_detection:
+        raise HTTPException(404, "Раздел выключен")
+    review = db.get(Review, review_id)
+    if not review:
+        raise HTTPException(404, "Ревью не найдено")
+    submission, review = review_context(db, review.submission_id, user)
+    if submission.status == SubmissionStatus.COMPLETED:
+        raise HTTPException(409, "Завершённое ревью нельзя перезапустить")
+    running = db.scalar(
+        select(AiDetection)
+        .where(AiDetection.review_id == review.id, AiDetection.status == "running")
+        .order_by(AiDetection.created_at.desc())
+    )
+    # Зависший прогон перезапустить можно: процесс, который его вёл, уже мёртв.
+    if running and not is_stale_detection(running):
+        raise HTTPException(409, "Проверка на признаки AI уже выполняется")
+    background_tasks.add_task(run_detection, review.id)
+    return {"review_id": str(review.id), "status": "running"}
 
 
 @router.post("/reviews/{review_id}/complete")

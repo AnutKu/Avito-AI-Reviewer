@@ -26,7 +26,7 @@ from ..security import require
 from ..serializers import assignment_data, iso, review_data, submission_data
 from ..services.github import GithubSnapshotError, fetch_github_snapshot
 from ..services.status import record_initial, transition
-from ..services.review_pipeline import run_review
+from ..services.review_pipeline import run_detection, run_review
 
 router = APIRouter(
     prefix="/student",
@@ -142,6 +142,7 @@ def submit(
     transition(db, submission, SubmissionStatus.PROPOSED, comment="AI-ревью поставлено в очередь")
     db.commit()
     background_tasks.add_task(run_review, review.id)
+    background_tasks.add_task(run_detection, review.id)
     data = submission_data(submission)
     data["review"] = {"id": str(review.id), "ai_status": review.ai_status}
     return data

@@ -24,6 +24,15 @@ def archive_with_notebook():
     return buffer.getvalue()
 
 
+def archive_notebook_json(execution_counts, markdown=0):
+    cells = [
+        {"cell_type": "code", "execution_count": count, "source": ["x = 1\n"], "outputs": []}
+        for count in execution_counts
+    ]
+    cells += [{"cell_type": "markdown", "source": ["## Раздел\n"]} for _ in range(markdown)]
+    return json.dumps({"cells": cells})
+
+
 class GithubSnapshotTest(unittest.TestCase):
     def test_extracts_notebook_content_and_facts(self):
         snapshot = build_snapshot(archive_with_notebook())
@@ -32,6 +41,32 @@ class GithubSnapshotTest(unittest.TestCase):
         self.assertEqual(snapshot.parsed_facts["metrics"], ["f1"])
         self.assertTrue(snapshot.parsed_facts["seed_fixed"])
         self.assertEqual(snapshot.parsed_facts["failed_cells"], 1)
+
+    def test_notebook_facts_are_grouped_per_file(self):
+        # Плоский список счётчиков со всего репозитория давал бы ложный
+        # «непорядок выполнения» на каждом стыке между ноутбуками.
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as bundle:
+            bundle.writestr("repo-main/a.ipynb", archive_notebook_json([1, 2, 3]))
+            bundle.writestr("repo-main/b.ipynb", archive_notebook_json([1, 2]))
+
+        notebooks = build_snapshot(buffer.getvalue()).parsed_facts["notebooks"]
+
+        self.assertEqual([item["path"] for item in notebooks], ["a.ipynb", "b.ipynb"])
+        self.assertEqual(notebooks[0]["execution_counts"], [1, 2, 3])
+        self.assertEqual(notebooks[1]["execution_counts"], [1, 2])
+
+    def test_unrun_cells_and_cell_kinds_are_counted(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as bundle:
+            bundle.writestr("repo-main/a.ipynb", archive_notebook_json([1, None, 3], markdown=2))
+
+        facts = build_snapshot(buffer.getvalue()).parsed_facts["notebooks"][0]
+
+        self.assertEqual(facts["code_cells"], 3)
+        self.assertEqual(facts["unrun_cells"], 1)
+        self.assertEqual(facts["markdown_cells"], 2)
+        self.assertGreater(facts["markdown_chars"], 0)
 
     def test_rejects_invalid_archive(self):
         with self.assertRaises(GithubSnapshotError):

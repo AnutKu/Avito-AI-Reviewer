@@ -95,6 +95,27 @@ class SignalDecision(StrEnum):
     BLITZ = "blitz"
 
 
+class DetectionCategory(StrEnum):
+    """Характер использования AI, а не факт нарушения (FR-046).
+
+    Инструментальное использование курсом разрешено: `TOOL_ASSISTED` не повод
+    ни для чего, кроме внимания.
+    """
+
+    NO_SIGNS = "no_signs"
+    TOOL_ASSISTED = "tool_assisted"
+    LIKELY_GENERATED = "likely_generated"
+
+
+class FraudVerdict(StrEnum):
+    """Решение человека. Балл не меняет — для этого есть решения по критериям."""
+
+    NO_SIGNS = "no_signs"
+    TOOL_ASSISTED = "tool_assisted"
+    MISCONDUCT = "misconduct"
+    INCONCLUSIVE = "inconclusive"
+
+
 class BlitzStatus(StrEnum):
     DRAFT = "draft"
     SENT = "sent"

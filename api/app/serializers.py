@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Any
 
-from .models import AiSignal, Assignment, Review, ReviewItem, Submission
+from .config import settings
+from .models import AiDetection, AiSignal, Assignment, Review, ReviewItem, Submission
 
 
 def iso(value: datetime | None) -> str | None:
@@ -64,6 +65,35 @@ def signal_data(signal: AiSignal) -> dict:
         "grounds": signal.grounds,
         "limitations": signal.limitations,
         "reviewer_decision": signal.reviewer_decision,
+    }
+
+
+def detection_data(detection: AiDetection | None) -> dict | None:
+    """Индекс отдаётся наружу только при достаточном покрытии.
+
+    Гейт стоит здесь, а не в интерфейсе: «мало данных» и «мало признаков» дают
+    одинаково низкое число, и показать его — значит соврать. Экран получает
+    reportable=false и печатает «признаков недостаточно», а не ноль.
+    """
+
+    if not detection:
+        return None
+    reportable = detection.status == "ready" and detection.confidence != "low"
+    return {
+        "id": str(detection.id),
+        "status": detection.status,
+        "score": int(detection.score) if reportable and detection.score is not None else None,
+        "category": detection.category if reportable else None,
+        "confidence": detection.confidence,
+        "coverage": detection.coverage,
+        "contributions": detection.contributions if reportable else [],
+        "summary": detection.summary,
+        "limitations": detection.limitations,
+        "error": detection.error,
+        "model": detection.model,
+        "reportable": reportable,
+        "blitz_threshold": settings.detection_blitz_threshold,
+        "created_at": iso(detection.created_at),
     }
 
 
