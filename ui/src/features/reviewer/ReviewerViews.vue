@@ -233,10 +233,10 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
     <div class="table-card">
       <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>AI-разбор</span><span>Срок</span><span /></div>
       <button v-for="item in visibleQueue" :key="item.id" class="table-row" :disabled="item.status === 'blitz_sent'" @click="item.status !== 'blitz_sent' && openReview(item.id)">
-        <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}</small></span></span>
+        <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}<template v-if="item.is_overdue"> · сдано после срока</template></small></span></span>
         <StatusBadge :status="item.status" />
         <span class="ai-ready" :class="[item.ai_status, { demo: item.is_demo }]"><i>✦</i>{{ item.is_demo ? 'Демо-фикстура' : aiStatusNames[item.ai_status] || item.ai_status }}</span>
-        <span :class="{ danger: item.deadline_risk }"><b>{{ formatDate(item.deadline_at, true) }}</b><small v-if="item.deadline_risk">Риск просрочки</small></span>
+        <span :class="{ danger: item.deadline_state === 'overdue', warn: item.deadline_state === 'risk' }"><b>{{ formatDate(item.deadline_at, true) }}</b><small v-if="item.deadline_state === 'overdue'">Срок вышел</small><small v-else-if="item.deadline_state === 'risk'">Меньше суток</small></span>
         <strong class="row-arrow">{{ item.status === 'blitz_sent' ? '⏳' : '→' }}</strong>
       </button>
       <div v-if="!loading && !visibleQueue.length" class="empty-mini padded">{{ queue.length ? 'Все работы в очереди ждут ответа студента — включите «показывать все актуальные»' : 'Очередь пуста' }}</div>
