@@ -24,9 +24,10 @@ from ..models import (
 )
 from ..security import require
 from ..serializers import assignment_data, iso, review_data, submission_data
+from ..services.assignment import auto_distribute
 from ..services.github import GithubSnapshotError, fetch_github_snapshot
-from ..services.status import record_initial, transition
 from ..services.review_pipeline import run_review
+from ..services.status import record_initial, transition
 
 router = APIRouter(
     prefix="/student",
@@ -47,7 +48,11 @@ class BlitzAnswers(BaseModel):
 @router.get("/assignments")
 def assignments(user: User = Depends(student_guard), db: Session = Depends(get_db)) -> list[dict]:
     course_ids = select(Enrollment.course_id).where(Enrollment.user_id == user.id)
-    rows = db.scalars(select(Assignment).where(Assignment.course_id.in_(course_ids)).order_by(Assignment.deadline_at))
+    rows = db.scalars(
+        select(Assignment)
+        .where(Assignment.course_id.in_(course_ids), Assignment.published_at.is_not(None))
+        .order_by(Assignment.deadline_at)
+    )
     result = []
     for assignment in rows:
         submission = db.scalar(
@@ -76,7 +81,7 @@ def assignment(
     enrolled = db.scalar(
         select(Enrollment.id).where(Enrollment.course_id == row.course_id, Enrollment.user_id == user.id)
     ) if row else None
-    if not row or not enrolled:
+    if not row or not enrolled or row.published_at is None:
         raise HTTPException(404, "Задание не найдено")
     rubric = db.get(RubricVersion, row.current_rubric_version_id)
     data = assignment_data(row, rubric)
@@ -101,7 +106,7 @@ def submit(
             Enrollment.course_id == assignment.course_id, Enrollment.user_id == user.id
         )
     ) if assignment else None
-    if not assignment or not enrolled:
+    if not assignment or not enrolled or assignment.published_at is None:
         raise HTTPException(404, "Задание не найдено")
     existing = db.scalar(
         select(Submission).where(
@@ -140,6 +145,9 @@ def submit(
     db.add(review)
     db.flush()
     transition(db, submission, SubmissionStatus.PROPOSED, comment="AI-ревью поставлено в очередь")
+    if assignment.course.auto_assign:
+        db.flush()
+        auto_distribute(db, actor_id=None)
     db.commit()
     background_tasks.add_task(run_review, review.id)
     data = submission_data(submission)

@@ -57,6 +57,8 @@ class Course(Base):
     specialization: Mapped[str] = mapped_column(String(64), default="data_science")
     tone_of_voice: Mapped[dict] = mapped_column(JSONB, default=dict)
     reviewer_capacity: Mapped[int] = mapped_column(Integer, default=12)
+    # Распределять новые работы автоматически, без ручного подтверждения методиста.
+    auto_assign: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = now_col()
 
 
@@ -80,6 +82,8 @@ class Assignment(Base):
     effort_weight: Mapped[float] = mapped_column(Float, default=1.0)
     submission_channel: Mapped[str] = mapped_column(String(32), default="github")
     current_rubric_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # NULL = черновик; студенты и реестр работ видят только опубликованные.
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = now_col()
 
     course: Mapped[Course] = relationship()

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { taskCreater } from '../../shared/api'
+import { api, taskCreater } from '../../shared/api'
 
 // --- навигация экрана переживает выход в меню --------------------------------
 const NAV_KEY = 'taskcreater:nav'
@@ -293,6 +293,35 @@ async function gradeSolution() {
   } catch (e) { error.value = e.message } finally { grading.value = false }
 }
 
+// --- отправка готового задания в кабинет («Задания и критерии») -------------
+const sendingToAssignments = ref(false)
+async function sendToAssignments() {
+  const d = task.value?.data
+  if (!d) return
+  sendingToAssignments.value = true; error.value = ''; notice.value = ''
+  try {
+    const criteria = (d.criteria || []).map(c => ({
+      key: c.key || '', title: c.title,
+      max_score: Number(c.max_points) || 1, student_hint: c.student_hint || '',
+    }))
+    if (!criteria.length) throw new Error('В задании нет критериев')
+    const statement = [
+      d.context_md,
+      d.statement_md,
+      (d.deliverables || []).length ? 'Что сдать:\n' + d.deliverables.map(x => `• ${x}`).join('\n') : '',
+      d.public_rubric_note,
+    ].filter(Boolean).join('\n\n')
+    await api('/methodist/assignments', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: d.title, statement, submission_channel: 'stepik', criteria,
+        pass_score: Math.round((task.value.total_points || 0) * 0.6),
+      }),
+    })
+    notice.value = 'Задание отправлено в «Задания и критерии» кабинета'
+  } catch (e) { error.value = e.message } finally { sendingToAssignments.value = false }
+}
+
 function backToList() { editing.value = false; mode.value = 'list'; taskId.value = null; saveNav(); loadList() }
 
 onMounted(() => {
@@ -450,6 +479,7 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
           <button class="text-button" @click="showHidden = !showHidden">{{ showHidden ? 'Скрыть' : 'Показать' }} рубрику ревьюера</button>
           <a class="secondary" :href="`${exportBase}?format=markdown&view=student`" target="_blank">Бриф студента ↗</a>
           <a class="secondary" :href="`${exportBase}?format=markdown&view=reviewer`" target="_blank">Экспорт ревьюера ↗</a>
+          <button class="secondary" :disabled="sendingToAssignments" @click="sendToAssignments">{{ sendingToAssignments ? 'Отправляю…' : '→ В «Задания и критерии»' }}</button>
           <button class="primary" :disabled="validating" @click="validate">{{ validating ? 'Проверяю…' : 'Проверить критерии агентами' }}</button>
         </div>
         <div v-if="showHidden" class="tc-hidden">
