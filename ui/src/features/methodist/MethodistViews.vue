@@ -234,7 +234,7 @@ async function toggleAvailability(person) {
 }
 
 // --- задания и критерии ---------------------------------------------------
-const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '' })
+const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '', levels: [] })
 const showNewAssignment = ref(false)
 const draft = ref(null)
 const editAssignmentId = ref('')
@@ -259,7 +259,7 @@ async function createAssignment() {
       deadline_at: d.deadline_at ? new Date(d.deadline_at).toISOString() : null,
       effort_weight: Number(d.effort_weight) || 1, submission_channel: d.submission_channel,
       pass_score: Number(d.pass_score) || 0,
-      criteria: d.criteria.filter(c => c.title.trim()).map(c => ({ key: c.key, title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint })),
+      criteria: d.criteria.filter(c => c.title.trim()).map(c => ({ key: c.key, title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint, levels: c.levels || [] })),
     }) })
     showNewAssignment.value = false; notice.value = 'Задание создано'; await load()
   } catch (e) { error.value = e.message }
@@ -287,13 +287,15 @@ async function saveAssignment(id) {
 
 function startCriteria(item) {
   criteriaEditId.value = item.id
-  criteriaDraft.value = item.rubric.map(c => ({ key: c.key, title: c.title, max_score: c.max_score, student_hint: c.student_hint || '' }))
+  // levels здесь не редактируются, но переносятся: правка названия критерия не
+  // должна стирать градацию, заведённую в конструкторе заданий.
+  criteriaDraft.value = item.rubric.map(c => ({ key: c.key, title: c.title, max_score: c.max_score, student_hint: c.student_hint || '', levels: c.levels || [] }))
   if (!criteriaDraft.value.length) criteriaDraft.value = [emptyCriterion()]
 }
 async function saveCriteria(item) {
   try {
     await api(`/methodist/assignments/${item.id}/rubrics`, { method: 'POST', body: JSON.stringify({
-      criteria: criteriaDraft.value.filter(c => c.title.trim()).map(c => ({ key: c.key || '', title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint })),
+      criteria: criteriaDraft.value.filter(c => c.title.trim()).map(c => ({ key: c.key || '', title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint, levels: c.levels || [] })),
       pass_score: item.pass_score ?? 0, note: 'Обновлено в кабинете',
     }) })
     criteriaEditId.value = ''; notice.value = `Опубликована рубрика v${(item.rubric_version || 0) + 1}`; await load()
@@ -566,7 +568,7 @@ onMounted(load)
           <template v-else>
             <MarkdownText v-if="item.statement" class="rubric-statement" :text="item.statement" /><p v-else class="rubric-statement">Условие не заполнено</p>
             <div class="rubric-summary"><span><b>{{ item.max_score ?? '—' }}</b><small>макс. балл</small></span><span><b>{{ item.rubric.length }}</b><small>критериев</small></span><span><b>{{ item.effort_weight }}</b><small>трудоёмкость</small></span><span><b>{{ item.deadline_at ? formatDate(item.deadline_at, true) : '—' }}</b><small>дедлайн</small></span></div>
-            <div class="criteria-table"><div v-for="(criterion, index) in item.rubric" :key="criterion.key"><span>{{ index + 1 }}</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></div>
+            <div class="criteria-table"><div v-for="(criterion, index) in item.rubric" :key="criterion.key"><span>{{ index + 1 }}</span><b>{{ criterion.title }}<small v-if="criterion.levels?.length" class="crit-levels"><span v-for="level in criterion.levels" :key="level.points">{{ level.points }} — {{ level.descriptor || level.label }}</span></small></b><em>{{ criterion.max_score }} б.</em></div></div>
             <div class="rubric-actions"><p>{{ item.rubric_note || '—' }}</p><button class="secondary" @click="startEditAssignment(item)">✎ Задание</button><button class="secondary" @click="startCriteria(item)">✎ Критерии</button><button v-if="!item.published" class="primary" @click="publishAssignment(item, true)">Опубликовать</button><button v-else class="secondary" @click="publishAssignment(item, false)">Снять с публикации</button></div>
           </template>
         </div>

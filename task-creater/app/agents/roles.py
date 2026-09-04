@@ -113,4 +113,9 @@ def _normalize_points(task: TaskDraftData, target_total: float) -> TaskDraftData
     drift = round(target_total - sum(c.max_points for c in task.criteria), 2)
     if drift and task.criteria:
         task.criteria[0].max_points = round(task.criteria[0].max_points + drift, 2)
+        # Верхний уровень градации — это и есть «полный балл»: остатком его
+        # сдвигает вместе с максимумом, иначе лестница перестаёт доходить
+        # до верха и по ней нельзя поставить максимум.
+        if task.criteria[0].rubric_levels:
+            task.criteria[0].rubric_levels[-1].points = task.criteria[0].max_points
     return task

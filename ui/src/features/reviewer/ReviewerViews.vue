@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { aiStatusNames, api, formatDate } from '../../shared/api'
+import { reviewTotals } from '../../shared/score'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
@@ -200,6 +201,12 @@ async function complete() {
   } catch (e) { error.value = e.message }
 }
 
+// Суммарный балл за работу — до разбора по критериям. Пока решения приняты не
+// по всем критериям, это оценка AI, и говорить о ней надо словом, а не мелким
+// шрифтом: ревьюер публикует именно это число.
+const totals = computed(() => reviewTotals(current.value?.review?.items))
+const totalMax = computed(() => current.value?.review?.max_score ?? totals.value.max_score ?? null)
+
 // Что действительно требует внимания на этой работе. Раньше блок висел всегда
 // с постоянным текстом и советовал проверить то, чего в работе могло не быть.
 const snapshotFiles = computed(() => current.value?.snapshot?.parsed_facts?.files || [])
@@ -263,6 +270,16 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
     <div class="review-title"><div><span class="eyebrow">РЕВЬЮ РАБОТЫ</span><h1>{{ current.submission.student }}</h1><p>{{ current.submission.assignment }} · сдано {{ formatDate(current.submission.submitted_at, true) }}</p></div><StatusBadge :status="current.submission.status" /></div>
     <div v-if="notice" class="toast-success">✓ {{ notice }}<button @click="notice = ''">×</button></div>
     <div v-if="error" class="toast-error">{{ error }}<button @click="error = ''">×</button></div>
+    <section class="score-total" :class="{ settled: totals.total && !totals.pending }">
+      <div class="score-total-value"><b>{{ totals.total ? totals.score : '—' }}</b><small v-if="totalMax != null">из {{ totalMax }}</small></div>
+      <div class="score-total-meta">
+        <b>{{ totals.total && !totals.pending ? 'Итоговый балл за работу' : 'Предварительный балл за работу' }}</b>
+        <small v-if="!totals.total">Разбора по критериям ещё нет — {{ aiStatusNames[current.review.ai_status] || current.review.ai_status }}.</small>
+        <small v-else-if="totals.pending">Решено {{ totals.decided }} из {{ totals.total }} критериев. По остальным пока стоит оценка AI — она станет вашей, когда вы примете решение ниже.</small>
+        <small v-else>Решения приняты по всем {{ totals.total }} критериям. Публикация выставит студенту это число.</small>
+        <div v-if="totals.total" class="score-total-bar"><i :style="{ width: `${Math.round((totals.decided / totals.total) * 100)}%` }" /></div>
+      </div>
+    </section>
     <div class="review-workspace">
       <article class="notebook-panel"><header><div class="file-tab" :title="snapshotFiles.join('\n')"><span>◇</span>{{ snapshotFiles[0] || 'Снапшот решения' }}<i v-if="snapshotFiles.length > 1">+{{ snapshotFiles.length - 1 }}</i></div><a :href="current.submission.source_url" target="_blank">GitHub ↗</a></header><pre>{{ current.snapshot.content }}</pre><footer><span>Снапшот сохранён {{ formatDate(current.snapshot.fetched_at, true) }}</span><span>Повторных запросов к GitHub нет</span></footer></article>
       <aside class="review-panel">
@@ -308,6 +325,12 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
           <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">
             <header><div><span class="confidence" :class="item.confidence">{{ item.confidence === 'high' ? 'Высокая' : item.confidence === 'medium' ? 'Средняя' : 'Низкая' }}</span><h3>{{ item.criterion_title }}</h3></div><strong>{{ item.ai_score }} <small>/ {{ item.max_score }}</small></strong></header>
             <MarkdownText :text="item.recommendation" /><div class="evidence" v-for="proof in item.evidence" :key="proof.quote"><span>“</span><code>{{ proof.quote }}</code><small>{{ proof.anchor }}</small></div>
+            <div v-if="item.levels?.length" class="levels">
+              <small>Что означает балл по этому критерию</small>
+              <div v-for="level in item.levels" :key="level.points" class="level-row" :class="{ picked: Number(level.points) === Number(item.final_score ?? item.ai_score) }">
+                <b>{{ level.points }}</b><span><i>{{ level.label }}</i>{{ level.descriptor }}</span>
+              </div>
+            </div>
             <div v-if="item.reviewer_action === 'pending'" class="decision-box"><div class="edit-inline"><label>Ваш балл<input v-model="item.editScore" type="number" min="0" :max="item.max_score" step="0.5" /></label><label>Комментарий<input v-model="item.editComment" placeholder="Необязательно" /></label></div><div class="decision-actions"><button class="accept" @click="decideItem(item, 'accepted')">✓ Принять</button><button @click="decideItem(item, 'changed')">Изменить</button><button class="reject" @click="decideItem(item, 'rejected')">Отклонить</button></div></div>
             <div v-else class="decision-done">✓ Решение: {{ { accepted: 'принято', changed: 'изменено', rejected: 'отклонено' }[item.reviewer_action] }} <button @click="item.reviewer_action = 'pending'">Изменить</button></div>
           </article>

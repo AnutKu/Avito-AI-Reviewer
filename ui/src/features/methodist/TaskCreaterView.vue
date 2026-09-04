@@ -301,9 +301,14 @@ async function sendToAssignments() {
   if (!d) return
   sendingToAssignments.value = true; error.value = ''; notice.value = ''
   try {
+    // Градация уезжает вместе с критерием: без неё ревьюер в кабинете увидит
+    // «3 из 3» и ни слова о том, за что эти 3 ставятся.
     const criteria = (d.criteria || []).map(c => ({
       key: c.key || '', title: c.title,
       max_score: Number(c.max_points) || 1, student_hint: c.student_hint || '',
+      levels: (c.rubric_levels || []).map(l => ({
+        points: Number(l.points) || 0, label: l.label || '', descriptor: l.descriptor || '',
+      })),
     }))
     if (!criteria.length) throw new Error('В задании нет критериев')
     const statement = [
@@ -488,7 +493,8 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
             <h4>{{ c.title }} <em>0–{{ c.max_points }} · {{ c.check_kind === 'objective' ? 'объективный' : 'субъективный' }}</em></h4>
             <MarkdownText :text="c.description" />
             <ul v-if="c.expected_signals?.length"><li v-for="(s, i) in c.expected_signals" :key="i">{{ s }}</li></ul>
-            <div v-if="c.rubric_levels?.length" class="tc-levels"><span v-for="(lv, i) in c.rubric_levels" :key="i">{{ lv.points }} — {{ lv.label }}</span></div>
+            <div v-if="c.rubric_levels?.length" class="tc-levels"><span v-for="(lv, i) in c.rubric_levels" :key="i"><b>{{ lv.points }}</b> {{ lv.label }} — {{ lv.descriptor }}</span></div>
+            <p v-else class="tc-nolevels">Градации нет: не сказано, за что ставится каждый балл.</p>
           </article>
         </div>
       </article>
@@ -662,7 +668,10 @@ onUnmounted(() => { clearInterval(listTimer); clearInterval(genTimer); registry.
 .tc-hidden article { margin-bottom: 12px; }
 .tc-hidden h4 { margin: 0 0 4px; font-size: 14px; } .tc-hidden h4 em { font-weight: 400; color: #8a8a9c; }
 .tc-hidden ul { margin: 4px 0 4px 18px; font-size: 13px; color: #444; }
-.tc-levels { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: #6b6b80; }
+/* Градация — построчно: дескриптор это фраза, а не метка, и в ряд он не влезает. */
+.tc-levels { display: grid; gap: 3px; margin-top: 5px; font-size: 12px; color: #6b6b80; }
+.tc-levels b { display: inline-block; min-width: 16px; color: #3f414c; }
+.tc-nolevels { margin: 5px 0 0; font-size: 12px; color: #b45309; }
 
 .tc-progress { display: flex; align-items: center; gap: 10px; color: #6b6b80; flex-wrap: wrap; }
 .tc-progress small { color: #b7b7c6; width: 100%; }

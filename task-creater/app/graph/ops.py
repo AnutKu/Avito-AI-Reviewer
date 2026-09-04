@@ -32,9 +32,22 @@ def apply_edits(
         else:  # modify | add
             if e.proposed_criterion is None:
                 continue
+            previous = by_key.get(e.criterion_key)
             if e.criterion_key not in by_key:
                 order.append(e.criterion_key)
-            by_key[e.criterion_key] = e.proposed_criterion.model_copy(deep=True)
+            proposed = e.proposed_criterion.model_copy(deep=True)
+            # Правка формулировки не должна стирать градацию: критик присылает
+            # критерий целиком и иногда возвращает его без уровней. Переносим
+            # прежние — но только если вес не изменился, иначе старая лестница
+            # ведёт не туда.
+            if (
+                not proposed.rubric_levels
+                and previous is not None
+                and previous.rubric_levels
+                and previous.max_points == proposed.max_points
+            ):
+                proposed.rubric_levels = [lvl.model_copy() for lvl in previous.rubric_levels]
+            by_key[e.criterion_key] = proposed
     return [by_key[k] for k in order if k in by_key]
 
 
