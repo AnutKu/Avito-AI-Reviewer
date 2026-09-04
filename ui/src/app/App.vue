@@ -22,8 +22,9 @@ const allNav = {
     { id: 'student-blitz', label: 'Доп. вопросы', icon: '?' },
   ],
   reviewer: [
-    { id: 'reviewer-queue', label: 'Моя очередь', icon: '≡' },
-    { id: 'reviewer-review', label: 'Ревью', icon: '✓' },
+    // Разбор работы — не отдельный раздел, а страница внутри очереди: открывают
+    // его всегда из списка, и пункт меню остаётся подсвеченным (`pages`).
+    { id: 'reviewer-queue', label: 'Моя очередь', icon: '≡', pages: ['reviewer-review'] },
     { id: 'reviewer-history', label: 'История', icon: '⟲' },
   ],
   methodist: [

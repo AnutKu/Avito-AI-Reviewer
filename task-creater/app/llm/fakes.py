@@ -48,8 +48,39 @@ def _stable_frac(*parts: str) -> float:
 # --------------------------------------------------------------------------- #
 
 
+def _ladder(steps: list[tuple[str, str]]) -> list:
+    """Градация по целым баллам: steps[i] — уровень на i баллов, снизу вверх.
+
+    Максимум критерия равен len(steps) - 1, поэтому веса в оффлайн-рубрике
+    целые и фиксированные (4+3+2+1). К запрошенной разбалловке их приведёт
+    `_normalize_points` — так же, как приводит ответ настоящей модели.
+    Структурно оффлайн-ответ обязан быть валидным ровно как настоящий, иначе
+    он перестаёт быть репетицией сквозного сценария.
+    """
+    from app.schemas import RubricLevel
+
+    return [
+        RubricLevel(points=float(index), label=label, descriptor=descriptor)
+        for index, (label, descriptor) in enumerate(steps)
+    ]
+
+
+def _scaled_ladder(top: float, steps: list[tuple[str, str]]) -> list:
+    """То же, но с произвольным максимумом: уровни ровно раскладываются на 0..top.
+
+    Нужен там, где вес критерия уже приведён к разбалловке и целым не является.
+    """
+    from app.schemas import RubricLevel
+
+    span = max(len(steps) - 1, 1)
+    return [
+        RubricLevel(points=round(top * index / span, 2), label=label, descriptor=descriptor)
+        for index, (label, descriptor) in enumerate(steps)
+    ]
+
+
 def _fake_generated_task(system: str, user: str):
-    from app.schemas import Criterion, GeneratedTask, RubricLevel
+    from app.schemas import Criterion, GeneratedTask
 
     idea = _tag(user, "IDEA") or "учебное задание"
     track = _tag(user, "TRACK") or "General"
@@ -62,62 +93,80 @@ def _fake_generated_task(system: str, user: str):
             student_hint="Все пункты задания выполнены и работают как описано",
             description="Все требования условия выполнены: перечисленные артефакты присутствуют "
             "и ведут себя как описано, крайние случаи обработаны.",
-            max_points=round(total * 0.4, 2),
+            max_points=4,
             check_kind="objective",
             evidence_hint="Сверить список требований условия с реализацией пункт за пунктом",
             expected_signals=[
                 "Каждый пункт условия закрыт явно",
                 "Крайние случаи из условия обработаны и это видно в решении",
             ],
-            rubric_levels=[
-                RubricLevel(points=0, label="не выполнено", descriptor="ключевые требования отсутствуют"),
-                RubricLevel(
-                    points=round(total * 0.2, 2),
-                    label="частично",
-                    descriptor="есть пропуски или необработанные случаи",
-                ),
-                RubricLevel(
-                    points=round(total * 0.4, 2),
-                    label="полностью",
-                    descriptor="все требования и крайние случаи покрыты",
-                ),
-            ],
+            rubric_levels=_ladder(
+                [
+                    ("не выполнено", "ключевые требования условия не реализованы"),
+                    ("начато", "закрыт один пункт условия из перечисленных"),
+                    ("частично", "закрыта половина пунктов, крайние случаи не обработаны"),
+                    ("почти полно", "закрыты все пункты, но хотя бы один крайний случай падает"),
+                    ("полностью", "все требования и крайние случаи покрыты и это видно в решении"),
+                ]
+            ),
         ),
         Criterion(
             key="test-coverage",
             title="Тесты",
             student_hint="Решение покрыто тестами",
             description="Решение покрыто тестами в достаточном объёме.",
-            max_points=round(total * 0.25, 2),
+            max_points=3,
             check_kind="objective",
             evidence_hint="Посмотреть каталог с тестами",
             expected_signals=[
                 "Не менее 8 осмысленных тест-кейсов",
                 "Минимум 3 теста на крайние случаи и ошибки",
             ],
-            rubric_levels=[],
+            # Градация есть, но порог в ней не назван числом — критерий
+            # выполняется формально одним тестом-заглушкой (находка F2).
+            rubric_levels=_ladder(
+                [
+                    ("нет", "тестов нет"),
+                    ("мало", "тесты есть, но их мало"),
+                    ("почти достаточно", "тестов почти достаточно"),
+                    ("достаточно", "тестов достаточно"),
+                ]
+            ),
         ),
         Criterion(
             key="readable-code",
             title="Читаемость",
             student_hint="Оформление и читаемость",
             description="Код человекочитаемый и написан в хорошем стиле, как на воркшопе.",
-            max_points=round(total * 0.2, 2),
+            max_points=2,
             check_kind="subjective",
             evidence_hint="Бегло просмотреть основные файлы",
             expected_signals=[],
-            rubric_levels=[],
+            # Уровни отличаются только словами — по такой градации нельзя
+            # выбрать между соседними баллами (находка F1).
+            rubric_levels=_ladder(
+                [
+                    ("плохо", "код читается плохо"),
+                    ("средне", "код читается средне"),
+                    ("хорошо", "код читается хорошо"),
+                ]
+            ),
         ),
         Criterion(
             key="architecture",
             title="Структура",
             student_hint="Структура решения",
             description="Решение разбито на части с понятными границами, структура соответствует условию.",
-            max_points=round(total * 0.15, 2),
+            max_points=1,
             check_kind="subjective",
             evidence_hint="Оценить декомпозицию и границы модулей",
             expected_signals=[],
-            rubric_levels=[],
+            rubric_levels=_ladder(
+                [
+                    ("нет", "вся логика в одном месте, границ между частями нет"),
+                    ("да", "части с непересекающимися обязанностями, зависимости в одну сторону"),
+                ]
+            ),
         ),
     ]
     return GeneratedTask(
@@ -134,7 +183,7 @@ def _fake_generated_task(system: str, user: str):
             "Оформите структуру и опишите ключевые решения",
         ],
         submission_format="Ссылка на репозиторий / документ с решением.",
-        public_rubric_note="Максимум 10 баллов, по критериям из таблицы. "
+        public_rubric_note=f"Максимум {total:g} баллов, по критериям из таблицы. "
         "По каждому: полный балл — сделано и обосновано, половина — есть пробелы, 0 — нет.",
         learning_objectives=[
             f"Освоить базовые практики направления «{track}»",
@@ -304,7 +353,9 @@ def _fake_critic_output(system: str, user: str):
         ),
     ]
 
-    def refined(key: str, title: str, desc: str, mx: float, kind: str, hint: str) -> Criterion:
+    def refined(
+        key: str, title: str, desc: str, mx: float, kind: str, hint: str, ladder: list[tuple[str, str]]
+    ) -> Criterion:
         return Criterion(
             key=key,
             title=title,
@@ -314,7 +365,9 @@ def _fake_critic_output(system: str, user: str):
             check_kind=kind,
             evidence_hint=hint,
             expected_signals=["Проверяемый порог задан числом", "Формальное выполнение не засчитывается"],
-            rubric_levels=[],
+            # Уточнение критерия — это в том числе уточнение градации: пороги
+            # названы числом, и между соседними баллами теперь есть разница.
+            rubric_levels=_scaled_ladder(mx, ladder),
         )
 
     src = {c["key"]: c for c in criteria if "key" in c}
@@ -333,6 +386,11 @@ def _fake_critic_output(system: str, user: str):
                 float(src.get("readable-code", {}).get("max_points", 2)),
                 "objective",
                 "Просмотреть 3–4 основных файла, отметить нарушения по чек-листу",
+                [
+                    ("нет", "нарушений чек-листа больше 5"),
+                    ("частично", "нарушений 3–5"),
+                    ("да", "нарушений не больше 2"),
+                ],
             ),
             rationale="Заменяем субъективное понятие наблюдаемым чек-листом с порогами баллов.",
             addresses=["F1"],
@@ -351,6 +409,11 @@ def _fake_critic_output(system: str, user: str):
                 float(src.get("test-coverage", {}).get("max_points", 2.5)),
                 "objective",
                 "Открыть тесты, пересчитать осмысленные кейсы и покрытие крайних случаев",
+                [
+                    ("нет", "меньше 4 осмысленных кейсов или только тесты-заглушки"),
+                    ("частично", "4–7 кейсов либо меньше 3 на крайние случаи"),
+                    ("да", "не меньше 8 кейсов, из них не меньше 3 на крайние случаи и ошибки"),
+                ],
             ),
             rationale="Вводим измеримый порог и явно исключаем формальное выполнение.",
             addresses=["F2"],
@@ -411,7 +474,7 @@ def _fake_criterion(system: str, user: str):
     """Офлайн-критерий: с признаками и уровнями — ровно то, чего требует промпт."""
 
     del system
-    from app.schemas import Criterion, RubricLevel
+    from app.schemas import Criterion
 
     title = _line_after(user, "Критерий:") or "Критерий"
     try:
@@ -432,11 +495,14 @@ def _fake_criterion(system: str, user: str):
             "выбор обоснован сравнением с альтернативой",
             "сформулирован вывод, а не пересказ данных",
         ],
-        rubric_levels=[
-            RubricLevel(points=0.0, label="Не выполнено", descriptor="признаков в работе нет"),
-            RubricLevel(points=round(top / 2, 2), label="Частично", descriptor="есть расчёт без обоснования"),
-            RubricLevel(points=top, label="Полно", descriptor="есть расчёт, обоснование и вывод"),
-        ],
+        rubric_levels=_scaled_ladder(
+            top,
+            [
+                ("Не выполнено", "признаков в работе нет"),
+                ("Частично", "есть расчёт, но без обоснования выбора"),
+                ("Полно", "есть расчёт, обоснование и вывод"),
+            ],
+        ),
     )
 
 

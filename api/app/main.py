@@ -27,6 +27,19 @@ _COLUMN_MIGRATIONS = (
     "ALTER TABLE assignments ADD COLUMN IF NOT EXISTS authoring JSONB "
     "NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS samples INTEGER NOT NULL DEFAULT 1",
+    # Градация внутри критерия какое-то время называлась `rubric_levels` — так её
+    # звали в движке. В кабинете она `levels`, и по этому имени её читает экран
+    # ревьюера. Переименовываем ключ в уже сохранённых рубриках, иначе заведённая
+    # раньше градация просто перестанет находиться.
+    """UPDATE rubric_versions SET criteria = (
+        SELECT jsonb_agg(
+            CASE WHEN item ? 'rubric_levels'
+                 THEN (item - 'rubric_levels') || jsonb_build_object('levels', item -> 'rubric_levels')
+                 ELSE item END
+            ORDER BY ordinality
+        )
+        FROM jsonb_array_elements(criteria) WITH ORDINALITY AS t(item, ordinality)
+    ) WHERE criteria::text LIKE '%rubric_levels%'""",
 )
 
 

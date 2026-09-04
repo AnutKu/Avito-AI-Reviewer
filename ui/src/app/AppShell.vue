@@ -13,7 +13,7 @@ const roleNames = { student: 'Студент', reviewer: 'Ревьюер', metho
     <aside class="sidebar">
       <div class="side-brand"><span class="brand-mark brand-mark--small"><b /><b /><b /><b /></span><span>AI Reviewer</span></div>
       <nav>
-        <button v-for="item in nav" :key="item.id" :class="{ active: active === item.id }" @click="emit('navigate', item.id)">
+        <button v-for="item in nav" :key="item.id" :class="{ active: active === item.id || item.pages?.includes(active) }" @click="emit('navigate', item.id)">
           <span class="nav-icon">{{ item.icon }}</span>{{ item.label }}
           <span v-if="item.demo" class="nav-demo">demo</span>
         </button>

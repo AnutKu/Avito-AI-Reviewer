@@ -436,7 +436,7 @@ def test_criterion_assist_returns_signals_and_levels(methodist, engine):
     assert response.status_code == 200, response.text
     out = response.json()
     assert out["max_score"] == 3
-    assert out["expected_signals"] and out["rubric_levels"]
+    assert out["expected_signals"] and out["levels"]
 
 
 def test_criterion_assist_writes_nothing(methodist, draft, engine):
@@ -458,7 +458,7 @@ def test_rubric_levels_survive_a_save(methodist):
                     "max_score": 4,
                     "description": "Названы метрики с формулой",
                     "expected_signals": ["есть формула"],
-                    "rubric_levels": [
+                    "levels": [
                         {"points": 0, "label": "Не выполнено", "descriptor": "метрик нет"},
                         {"points": 4, "label": "Полно", "descriptor": "метрики с формулой"},
                     ],
@@ -468,5 +468,71 @@ def test_rubric_levels_survive_a_save(methodist):
     )
     assignment_id = created.json()["id"]
     row = next(a for a in methodist.get("/api/methodist/assignments").json() if a["id"] == assignment_id)
-    assert len(row["rubric"][0]["rubric_levels"]) == 2
-    assert row["rubric"][0]["rubric_levels"][1]["descriptor"] == "метрики с формулой"
+    assert len(row["rubric"][0]["levels"]) == 2
+    assert row["rubric"][0]["levels"][1]["descriptor"] == "метрики с формулой"
+
+
+def test_the_hidden_half_of_a_task_never_reaches_a_student(client, methodist):
+    """Эталон и заметки ревьюеру живут в authoring — студенту их видеть нельзя."""
+
+    methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "С эталоном",
+            "statement": "Условие",
+            "authoring": {"reference_solution": "СЕКРЕТНЫЙ ЭТАЛОН", "reviewer_notes": "калибровка"},
+            "criteria": [
+                {
+                    "title": "Метрики",
+                    "max_score": 4,
+                    "description": "скрытое описание",
+                    "expected_signals": ["скрытый признак"],
+                    "levels": [{"points": 0, "label": "Нет", "descriptor": "скрытый уровень"}],
+                }
+            ],
+            "publish": True,
+        },
+    )
+    token = client.post("/api/auth/demo/student").json()["access_token"]
+    body = client.get("/api/student/assignments", headers={"Authorization": f"Bearer {token}"}).text
+    for secret in ("СЕКРЕТНЫЙ ЭТАЛОН", "калибровка", "скрытое описание", "скрытый признак", "скрытый уровень"):
+        assert secret not in body, f"«{secret}» утекло студенту"
+    assert "authoring" not in body
+
+
+
+
+
+def test_reviewer_sees_levels_without_the_reference_solution(methodist, client):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "Для ревьюера",
+            "authoring": {"reference_solution": "СЕКРЕТНЫЙ ЭТАЛОН"},
+            "criteria": [
+                {
+                    "title": "Метрики",
+                    "max_score": 2,
+                    "levels": [
+                        {"points": 0, "label": "Нет", "descriptor": "метрик нет"},
+                        {"points": 2, "label": "Есть", "descriptor": "метрики с формулой"},
+                    ],
+                }
+            ],
+            "publish": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    from app.models import Assignment, RubricVersion
+    from app.serializers import assignment_data
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        row = db.get(Assignment, __import__("uuid").UUID(created.json()["id"]))
+        rubric = db.get(RubricVersion, row.current_rubric_version_id)
+        for_reviewer = assignment_data(row, rubric, full=True)
+
+    assert for_reviewer["rubric"][0]["levels"], "градация ревьюеру нужна"
+    assert "authoring" not in for_reviewer
+    assert "СЕКРЕТНЫЙ ЭТАЛОН" not in str(for_reviewer)

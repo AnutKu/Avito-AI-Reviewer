@@ -151,7 +151,7 @@ export function cleanCriterion(c) {
     student_hint: c.student_hint || '',
     description: c.description || '',
     expected_signals: (c.expected_signals || []).map(x => String(x).trim()).filter(Boolean),
-    rubric_levels: (c.rubric_levels || [])
+    levels: (c.levels || [])
       .filter(l => String(l.label || '').trim() || String(l.descriptor || '').trim())
       .map(l => ({ points: Number(l.points) || 0, label: l.label || '', descriptor: l.descriptor || '' })),
   }

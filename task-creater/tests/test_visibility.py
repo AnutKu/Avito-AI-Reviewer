@@ -23,7 +23,13 @@ TASK = TaskDraftData(
             check_kind="subjective",
             evidence_hint="Раздел про валидацию",
             expected_signals=["Сравнение take-rate по сегментам", "Ссылка на бенчмарк конкурентов"],
-            rubric_levels=[RubricLevel(points=2, label="хорошо", descriptor="разрыв подтверждён данными")],
+            rubric_levels=[
+                RubricLevel(points=0, label="нет", descriptor="take-rate по сегментам не считался"),
+                RubricLevel(points=1, label="слабо", descriptor="счёт есть, сравнения с бенчмарком нет"),
+                RubricLevel(points=2, label="средне", descriptor="разрыв подтверждён данными"),
+                RubricLevel(points=3, label="хорошо", descriptor="разрыв подтверждён и локализован по сегменту"),
+                RubricLevel(points=4, label="полно", descriptor="разрыв подтверждён, локализован и оценён в деньгах"),
+            ],
             max_points=4,
         ),
         Criterion(

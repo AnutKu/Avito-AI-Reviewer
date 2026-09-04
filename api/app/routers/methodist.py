@@ -91,6 +91,14 @@ class RubricCreate(BaseModel):
     note: str = ""
 
 
+class LevelIn(BaseModel):
+    """Один уровень градации: сколько баллов и за что именно."""
+
+    points: float = Field(ge=0, le=100)
+    label: str = ""
+    descriptor: str = ""
+
+
 class CriterionIn(BaseModel):
     key: str = ""
     title: str = Field(min_length=1)
@@ -102,7 +110,10 @@ class CriterionIn(BaseModel):
     check_kind: str = ""
     evidence_hint: str = ""
     expected_signals: list[str] = Field(default_factory=list)
-    rubric_levels: list[dict] = Field(default_factory=list)
+    # Градация внутри критерия. Приходит из конструктора заданий, вручную
+    # заводить её не обязательно: у рубрики без градации критерий по-прежнему
+    # оценивается «сколько-то из максимума».
+    levels: list[LevelIn] = Field(default_factory=list)
 
 
 class AssignmentIn(BaseModel):
@@ -489,7 +500,7 @@ def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get
     result = []
     for row in rows:
         rubric = db.get(RubricVersion, row.current_rubric_version_id)
-        data = assignment_data(row, rubric)
+        data = assignment_data(row, rubric, full=True, authoring=True)
         data["rubric_version"] = rubric.version if rubric else None
         data["rubric_note"] = rubric.note if rubric else ""
         data["rubric_versions"] = db.scalar(
@@ -532,15 +543,24 @@ def _criterion_dict(criterion: CriterionIn, seen: set[str]) -> dict:
     while key in seen:
         key, n = f"{base}_{n}", n + 1
     seen.add(key)
+    # Уровни идут по возрастанию балла: на экране ревьюера это лестница снизу
+    # вверх, и порядок из ответа модели на неё полагаться не даёт.
+    levels = sorted(criterion.levels, key=lambda level: level.points)
+    over = [level.points for level in levels if level.points > criterion.max_score]
+    if over:
+        raise HTTPException(
+            422, f"Критерий «{criterion.title.strip()}»: уровень {over[0]} больше максимума"
+        )
     row = {
         "key": key,
         "title": criterion.title.strip(),
         "max_score": float(criterion.max_score),
         "student_hint": criterion.student_hint.strip(),
+        "levels": [level.model_dump() for level in levels],
     }
     # Скрытые поля кладём только заполненными: пустой ключ в рубрике ничего не
     # значит, а версии критериев сравниваются по равенству словарей.
-    for field in ("description", "check_kind", "evidence_hint", "expected_signals", "rubric_levels"):
+    for field in ("description", "check_kind", "evidence_hint", "expected_signals"):
         value = getattr(criterion, field)
         if value:
             row[field] = value.strip() if isinstance(value, str) else value

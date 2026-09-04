@@ -500,3 +500,50 @@ def test_the_last_stage_never_advances_past_itself():
         status="running", progress="раунд 1/1: решают профили (4)", persona_type="student", personas=4
     )
     assert [row["state"] for row in rows][-1] != "done" or states(rows)["report"] == "active"
+
+
+# --- градация: кабинет ↔ движок --------------------------------------------
+
+from app.services.task_ai import engine_levels  # noqa: E402
+
+LADDER = [
+    {"points": 0, "label": "Не выполнено", "descriptor": "метрик нет"},
+    {"points": 3, "label": "Частично", "descriptor": "метрики без формулы"},
+    {"points": 6, "label": "Полно", "descriptor": "метрики с формулой"},
+]
+
+
+def test_levels_reach_the_engine_under_its_own_name():
+    """У кабинета поле зовётся levels, у движка — rubric_levels."""
+
+    payload = to_engine_criterion({"key": "m", "title": "Метрики", "max_score": 6, "levels": LADDER})
+    assert [lv["points"] for lv in payload["rubric_levels"]] == [0, 3, 6]
+    back = from_engine_criterion(payload)
+    assert len(back["levels"]) == 3
+
+
+def test_a_half_built_ladder_is_left_at_home():
+    """Движок отвергает градацию не от нуля до максимума — целиком критерий.
+
+    Рубрику заводят и руками, и незаконченная лестница там обычное дело.
+    Ронять из-за неё весь прогон нельзя: она просто не едет.
+    """
+
+    partial = to_engine_criterion({"title": "Метрики", "max_score": 6, "levels": LADDER[:2]})
+    assert partial["rubric_levels"] == []
+
+
+def test_levels_are_sorted_and_deduplicated_before_the_engine_sees_them():
+    shuffled = [LADDER[2], LADDER[0], LADDER[1]]
+    assert [lv["points"] for lv in engine_levels(shuffled, 6)] == [0, 3, 6]
+    assert engine_levels([LADDER[0], LADDER[0]], 6) == [], "два уровня на один балл — не шкала"
+
+
+def test_a_level_without_a_descriptor_does_not_count():
+    blank = [{"points": 0, "label": "", "descriptor": ""}, LADDER[2]]
+    assert engine_levels(blank, 6) == [], "уровень без наблюдаемого признака нечего показывать"
+
+
+def test_no_levels_at_all_is_fine():
+    assert engine_levels(None, 6) == []
+    assert to_engine_criterion({"title": "Метрики", "max_score": 6})["rubric_levels"] == []

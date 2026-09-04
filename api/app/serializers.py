@@ -18,8 +18,35 @@ def iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def assignment_data(assignment: Assignment, rubric: Any = None) -> dict:
-    return {
+# Поля критерия, которые видит студент. Градация («за что 0, за что 1, за что 2»)
+# сюда не входит: по ней решение подгоняется под грейдинг, и в конструкторе
+# заданий она с самого начала помечена как скрытая. Белый список, а не удаление
+# лишнего — по той же причине, что и у вопросов блица ниже: новое поле рубрики
+# по умолчанию не утекает.
+STUDENT_CRITERION_FIELDS = ("key", "title", "max_score", "student_hint")
+
+
+def public_criteria(criteria: list | None) -> list[dict]:
+    return [
+        {field: item[field] for field in STUDENT_CRITERION_FIELDS if field in item}
+        for item in (criteria or [])
+        if isinstance(item, dict)
+    ]
+
+
+def assignment_data(
+    assignment: Assignment, rubric: Any = None, *, full: bool = False, authoring: bool = False
+) -> dict:
+    """Два разных «больше, чем видит студент», и они не совпадают.
+
+    `full=True` — рубрика целиком, с градацией: это нужно ревьюеру, он по ней
+    ставит балл. `authoring=True` — авторские блоки задания (эталон решения,
+    заметки для калибровки, ревизия): это рабочий стол методиста. Ревьюеру
+    эталон никуда не выводится, поэтому и не отправляется: данные, которые
+    никто не показывает, — это утечка, которая ждёт своего экрана.
+    """
+
+    data = {
         "id": str(assignment.id),
         "title": assignment.title,
         "statement": assignment.statement,
@@ -30,15 +57,17 @@ def assignment_data(assignment: Assignment, rubric: Any = None) -> dict:
         "course_id": str(assignment.course_id),
         "published": assignment.published_at is not None,
         "published_at": iso(assignment.published_at),
-        "rubric": rubric.criteria if rubric else [],
+        "rubric": (rubric.criteria if full else public_criteria(rubric.criteria)) if rubric else [],
         "max_score": rubric.max_score if rubric else None,
         "pass_score": rubric.pass_score if rubric else None,
-        "authoring": assignment.authoring or {},
+    }
+    if authoring:
+        data["authoring"] = assignment.authoring or {}
         # Номер версии рубрики. Кабинет его не показывает как «v2» на кнопках —
         # версионирование внутреннее, — но результат AI-прогона обязан знать, к
         # какой ревизии он относится, иначе устаревший разбор не отличить.
-        "revision": rubric.version if rubric else 0,
-    }
+        data["revision"] = rubric.version if rubric else 0
+    return data
 
 
 def ai_run_data(run: Any, recommendations: list | None = None) -> dict:
@@ -110,12 +139,16 @@ def submission_data(submission: Submission, reviewer: str | None = None) -> dict
     }
 
 
-def item_data(item: ReviewItem) -> dict:
+def item_data(item: ReviewItem, levels: list | None = None) -> dict:
     return {
         "id": str(item.id),
         "criterion_key": item.criterion_key,
         "criterion_title": item.criterion_title,
         "max_score": item.max_score,
+        # Градация из рубрики, а не из ревью: ревьюер решает, сколько поставить,
+        # и должен видеть, за что каждый балл даётся. У старых рубрик её нет —
+        # тогда список пустой, и блок на экране не появляется.
+        "levels": levels or [],
         "ai_score": item.ai_score,
         "verdict": item.verdict,
         "confidence": item.confidence,
@@ -226,6 +259,12 @@ def review_data(review: Review, include_internal: bool = True) -> dict:
         "completed_at": iso(review.completed_at),
     }
     if include_internal:
+        rubric = review.rubric_version
+        levels_by_key = {
+            criterion.get("key"): criterion.get("levels") or []
+            for criterion in (rubric.criteria if rubric else [])
+            if isinstance(criterion, dict)
+        }
         data.update(
             {
                 "model": review.model,
@@ -233,7 +272,9 @@ def review_data(review: Review, include_internal: bool = True) -> dict:
                 "summary": review.raw_result.get("summary", ""),
                 "draft_feedback": review.draft_feedback,
                 "is_demo": bool(review.raw_result.get("demo_data", False)),
-                "items": [item_data(item) for item in review.items],
+                "items": [
+                    item_data(item, levels_by_key.get(item.criterion_key)) for item in review.items
+                ],
                 "signals": [signal_data(signal) for signal in review.signals],
             }
         )

@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # --------------------------------------------------------------------------- #
 #  Базовые сущности задания и критериев
@@ -26,9 +26,13 @@ TaskFormat = Literal["auto", "case_study", "metrics_design", "coding", "open"]
 class RubricLevel(BaseModel):
     """Уровень выполнения критерия и сколько баллов за него дают."""
 
-    points: float
-    label: str = Field(description="Короткая метка уровня, напр. 'частично'")
-    descriptor: str = Field(description="Наблюдаемый признак: по чему видно, что решение на этом уровне")
+    points: float = Field(ge=0)
+    label: str = Field(min_length=1, description="Короткая метка уровня, напр. 'частично'")
+    descriptor: str = Field(
+        min_length=1,
+        description="Наблюдаемый признак: по чему видно, что решение на этом уровне. "
+        "Пиши так, чтобы по нему отличался ЭТОТ балл от соседнего, а не «сделано частично».",
+    )
 
 
 class Criterion(BaseModel):
@@ -48,7 +52,9 @@ class Criterion(BaseModel):
         "конкретных ожидаемых ответов, метрик, гипотез — иначе студент просто спишет.",
     )
     description: str = Field(
-        description="СКРЫТО: что именно проверяет ревьюер, наблюдаемый признак, а не субъективное понятие."
+        min_length=1,
+        description="СКРЫТО: 2–4 предложения — что именно проверяет ревьюер, на каком материале "
+        "решения и какой признак считается выполненным. Наблюдаемый признак, а не субъективное понятие.",
     )
     check_kind: CheckKind = Field(
         description="objective — проверяется однозначно; subjective — требует суждения ревьюера"
@@ -60,8 +66,35 @@ class Criterion(BaseModel):
         "быть в решении). Это и есть то, что нельзя показывать студенту.",
     )
     rubric_levels: list[RubricLevel] = Field(
-        default_factory=list, description="СКРЫТО: детальные уровни выполнения с порогами баллов"
+        default_factory=list,
+        description="СКРЫТО: градация — по уровню на КАЖДЫЙ балл от 0 до max_points включительно "
+        "(у критерия на 2 балла это уровни 0, 1 и 2). Без неё ревьюер знает только максимум "
+        "и решает на глаз, за что снимать.",
     )
+
+    @model_validator(mode="after")
+    def levels_form_a_scale(self) -> Criterion:
+        """Градация — это шкала критерия, а не набор заметок к нему.
+
+        Проверяется ровно то, без чего балл по ней не поставить: уровни идут по
+        возрастанию, не повторяют один и тот же балл, начинаются с нуля и
+        доходят до максимума. Пустой список пропускается: рубрику можно завести
+        и вручную, а вот половина лестницы — хуже, чем её отсутствие, потому что
+        выглядит как полная.
+        """
+
+        if not self.rubric_levels:
+            return self
+        self.rubric_levels.sort(key=lambda level: level.points)
+        points = [level.points for level in self.rubric_levels]
+        if len(set(points)) != len(points):
+            raise ValueError(f"критерий {self.key}: два уровня на один и тот же балл — {points}")
+        if points[0] != 0 or points[-1] != self.max_points:
+            raise ValueError(
+                f"критерий {self.key}: градация должна начинаться с 0 и доходить до "
+                f"{self.max_points}, сейчас {points}"
+            )
+        return self
 
 
 class TaskDraftData(BaseModel):
@@ -109,8 +142,51 @@ class TaskDraftData(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
+def grading_gap(criterion: Criterion) -> str | None:
+    """Чего не хватает градации критерия, чтобы ревьюер мог по ней поставить балл.
+
+    Отдельная функция, а не валидатор `Criterion`: у критерия, заведённого
+    руками, градации может не быть вовсе, и это законно. А вот у критерия,
+    который сочинила модель, она обязана быть — иначе весь смысл генерации
+    сводится к названию и весу.
+    """
+
+    if not criterion.rubric_levels:
+        return f"критерий {criterion.key}: нет градации — не сказано, за что ставится балл"
+    points = {level.points for level in criterion.rubric_levels}
+    top = criterion.max_points
+    if top == int(top) and top <= 5:
+        # Балл целочисленный — значит, у каждого целого балла есть свой уровень.
+        # Именно этого не хватало ревьюеру: «3 из 3» без объяснения, чем три
+        # отличается от двух. Выше пяти требование снимается: расписывать
+        # девять уровней ради критерия на 8 баллов — не строгость, а формальность.
+        missing = [step for step in range(int(top) + 1) if step not in points]
+        if missing:
+            return (
+                f"критерий {criterion.key}: не описаны баллы {missing} — нужен уровень "
+                f"на каждый балл от 0 до {int(top)}"
+            )
+    elif len(points) < 3:
+        return f"критерий {criterion.key}: нужно не меньше трёх уровней, включая 0 и {top}"
+    return None
+
+
 class GeneratedTask(TaskDraftData):
-    """Схема, которую возвращает агент-генератор (совпадает с телом черновика)."""
+    """Схема, которую возвращает агент-генератор (совпадает с телом черновика).
+
+    Одно отличие от черновика: у сгенерированного критерия обязана быть
+    градация. Требование живёт здесь, а не в `Criterion`, чтобы instructor
+    переспросил модель ровно там, где она сэкономила, — и чтобы ручной импорт
+    задания без градации по-прежнему проходил.
+    """
+
+    @model_validator(mode="after")
+    def every_criterion_is_graded(self) -> GeneratedTask:
+        for criterion in self.criteria:
+            gap = grading_gap(criterion)
+            if gap:
+                raise ValueError(gap)
+        return self
 
 
 # --------------------------------------------------------------------------- #

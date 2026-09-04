@@ -33,6 +33,7 @@ from ..models import (
 )
 from ..security import require
 from ..serializers import (
+    assignment_data,
     blitz_data,
     detection_data,
     iso,
@@ -232,6 +233,11 @@ def review_screen(
     ) if settings.feature_ai_detection else None
     return {
         "submission": submission_data(submission, user.full_name),
+        # Условие и рубрика целиком — чтобы ревьюер мог свериться с заданием, не
+        # уходя с экрана. Рубрика берётся из версии ревью, а не текущей версии
+        # задания: работу оценивают по той шкале, по которой её разбирали.
+        # `full=True` — с градацией: ревьюеру она видна, студенту нет.
+        "assignment": assignment_data(submission.assignment, review.rubric_version, full=True),
         "detection": detection_data(detection),
         "snapshot": {
             "content": snapshot.content if snapshot else "",

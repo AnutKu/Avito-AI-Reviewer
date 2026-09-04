@@ -76,6 +76,34 @@ AUTHORING_FIELDS = (
 # --------------------------------------------------------------------------- #
 
 
+def engine_levels(levels: list | None, max_points: float) -> list[dict]:
+    """Градация в форме, которую примет движок.
+
+    Движок требует от градации быть шкалой: уровни без повторов, от нуля до
+    максимума. Рубрику заводят и руками, и половина лестницы там — обычное
+    дело; отдавать её движку нельзя (он отвергнет весь критерий), а ронять
+    из-за этого прогон — тем более. Поэтому неполная градация просто не едет:
+    агент оценит по описанию и признакам, как и раньше.
+    """
+
+    rows = [
+        {
+            "points": float(level.get("points") or 0),
+            "label": str(level.get("label") or "").strip(),
+            "descriptor": str(level.get("descriptor") or "").strip(),
+        }
+        for level in (levels or [])
+        if isinstance(level, dict)
+    ]
+    rows = [row for row in rows if row["label"] and row["descriptor"]]
+    points = sorted(row["points"] for row in rows)
+    if not rows or len(set(points)) != len(points):
+        return []
+    if points[0] != 0 or points[-1] != float(max_points):
+        return []
+    return sorted(rows, key=lambda row: row["points"])
+
+
 def to_engine_criterion(criterion: dict) -> dict:
     """Критерий кабинета в форме движка.
 
@@ -85,16 +113,18 @@ def to_engine_criterion(criterion: dict) -> dict:
     """
 
     title = str(criterion.get("title") or "").strip()
+    max_points = float(criterion.get("max_score") or criterion.get("max_points") or 1)
     return {
         "key": str(criterion.get("key") or "").strip() or "criterion",
         "title": title,
-        "max_points": float(criterion.get("max_score") or criterion.get("max_points") or 1),
+        "max_points": max_points,
         "student_hint": criterion.get("student_hint") or "",
         "description": criterion.get("description") or title,
         "check_kind": criterion.get("check_kind") or "subjective",
         "evidence_hint": criterion.get("evidence_hint") or "—",
         "expected_signals": list(criterion.get("expected_signals") or []),
-        "rubric_levels": list(criterion.get("rubric_levels") or []),
+        # У кабинета градация называется `levels`, у движка — `rubric_levels`.
+        "rubric_levels": engine_levels(criterion.get("levels"), max_points),
     }
 
 
@@ -110,7 +140,7 @@ def from_engine_criterion(criterion: dict) -> dict:
         "check_kind": criterion.get("check_kind") or "subjective",
         "evidence_hint": criterion.get("evidence_hint") or "",
         "expected_signals": list(criterion.get("expected_signals") or []),
-        "rubric_levels": list(criterion.get("rubric_levels") or []),
+        "levels": list(criterion.get("rubric_levels") or []),
     }
 
 
@@ -177,7 +207,7 @@ def _criterion_text(criterion: dict | None) -> str:
     signals = [s for s in (criterion.get("expected_signals") or []) if s]
     if signals:
         lines.append("Признаки сильного ответа: " + "; ".join(str(s) for s in signals))
-    levels = criterion.get("rubric_levels") or []
+    levels = criterion.get("levels") or criterion.get("rubric_levels") or []
     if levels:
         lines.append(
             "Уровни: "

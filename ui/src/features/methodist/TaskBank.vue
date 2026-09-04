@@ -59,14 +59,14 @@ const editedId = computed(() => (view.value === 'editor' && props.sub[0] !== 'ne
 // Следующий уровень: от «не выполнено» вверх к максимуму. Ставить каждый раз 0
 // бессмысленно — методист всё равно правит порог руками.
 function nextLevel(criterion) {
-  const used = (criterion.rubric_levels || []).map(l => Number(l.points) || 0)
+  const used = (criterion.levels || []).map(l => Number(l.points) || 0)
   const top = Number(criterion.max_score) || 1
   if (!used.length) return { points: 0, label: 'Не выполнено', descriptor: '' }
   const next = Math.min(top, Math.max(...used) + Math.max(0.5, top / 3))
   return { points: Math.round(next * 2) / 2, label: '', descriptor: '' }
 }
 
-const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '', description: '', expected_signals: [], rubric_levels: [] })
+const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '', description: '', expected_signals: [], levels: [] })
 const draft = ref(null)
 const saved = ref(null)
 const saving = ref(false)
@@ -106,7 +106,7 @@ function toDraft(row) {
       description: c.description || '', expected_signals: c.expected_signals || [],
       // Уровни возили только в одну сторону, и при первом же сохранении из
       // редактора они пропадали — потому AI-ревьюеры и требовали их каждый раз.
-      rubric_levels: c.rubric_levels || [],
+      levels: c.levels || [],
     })),
   }
 }
@@ -396,7 +396,7 @@ async function detailCriterion(index) {
       student_hint: c.student_hint || out.student_hint,
       description: out.description,
       expected_signals: out.expected_signals,
-      rubric_levels: out.rubric_levels,
+      levels: out.levels,
     }
     openCriterion.value = index
     notice.value = `Критерий «${c.title}» дополнен: признаки и уровни`
@@ -608,14 +608,14 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 
               <div class="tb-crit-field">
                 <span class="tb-crit-label">Уровни и пороги — от «не выполнено» до максимума</span>
-                <div v-for="(lv, li) in c.rubric_levels" :key="li" class="tb-level">
+                <div v-for="(lv, li) in c.levels" :key="li" class="tb-level">
                   <input v-model.number="lv.points" type="number" min="0" step="0.5" :max="c.max_score" title="баллы" />
                   <input v-model="lv.label" placeholder="метка" title="метка уровня" />
                   <input v-model="lv.descriptor" placeholder="что видно в работе" title="наблюдаемый признак" />
-                  <button class="text-button danger" title="убрать уровень" @click="c.rubric_levels.splice(li, 1)">×</button>
+                  <button class="text-button danger" title="убрать уровень" @click="c.levels.splice(li, 1)">×</button>
                 </div>
-                <p v-if="!c.rubric_levels.length" class="tb-crit-empty">не заданы — балл будет ставиться на глаз</p>
-                <button class="text-button" @click="c.rubric_levels.push(nextLevel(c))">＋ уровень</button>
+                <p v-if="!c.levels.length" class="tb-crit-empty">не заданы — балл будет ставиться на глаз</p>
+                <button class="text-button" @click="c.levels.push(nextLevel(c))">＋ уровень</button>
               </div>
             </div>
 
