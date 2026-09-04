@@ -366,3 +366,101 @@ def test_the_reference_solution_is_never_generated():
     draft = draft_from_engine_task(task, track="Аналитика")
     assert "reference_solution" not in draft["authoring"]
     assert "модель" not in str(draft["authoring"])
+
+
+# --- что делают агенты, по шагам -------------------------------------------
+
+from app.services.task_ai import run_stages  # noqa: E402
+
+
+def states(rows):
+    return {row["key"]: row["state"] for row in rows}
+
+
+def test_stages_mark_where_the_run_is_now():
+    rows = run_stages(
+        status="running", progress="раунд 1/1: решают профили (4)", persona_type="reviewer"
+    )
+    assert states(rows) == {
+        "snapshot": "done", "solving": "active",
+        "grading": "pending", "critique": "pending", "report": "pending",
+    }
+
+
+def test_grading_stage_lights_up_next():
+    rows = run_stages(
+        status="running", progress="раунд 1/1: предварительное ревью решений (4)", persona_type="both"
+    )
+    assert states(rows)["solving"] == "done"
+    assert states(rows)["grading"] == "active"
+
+
+def test_a_completed_run_shows_every_stage_done():
+    rows = run_stages(status="completed", progress="готово", persona_type="reviewer")
+    assert set(states(rows).values()) == {"done"}
+
+
+def test_a_failed_run_marks_the_stage_that_broke():
+    rows = run_stages(
+        status="failed", progress="раунд 1/1: предварительное ревью решений (4)", persona_type="reviewer"
+    )
+    assert states(rows)["grading"] == "failed"
+    assert states(rows)["solving"] == "done"
+
+
+def test_a_student_run_does_not_advertise_a_grading_step():
+    """Оценки там тоже считаются, но методисту этот шаг ничего не объясняет."""
+
+    keys = [row["key"] for row in run_stages(status="running", progress="", persona_type="student")]
+    assert "grading" not in keys and "solving" in keys
+
+
+def test_repeats_are_named_where_they_happen():
+    rows = run_stages(status="running", progress="", persona_type="reviewer", samples=5)
+    grading = next(row for row in rows if row["key"] == "grading")
+    assert "5 повтор" in grading["note"]
+    once = run_stages(status="running", progress="", persona_type="reviewer", samples=1)
+    assert "повтор" not in next(r for r in once if r["key"] == "grading")["note"]
+
+
+def test_unknown_wording_does_not_break_the_pipeline():
+    """Движок может переформулировать прогресс — картина обязана пережить это."""
+
+    rows = run_stages(status="running", progress="что-то новое", persona_type="reviewer")
+    assert [row["state"] for row in rows] == ["active", "pending", "pending", "pending", "pending"]
+
+
+def test_every_stage_explains_itself():
+    for row in run_stages(status="running", progress="", persona_type="both"):
+        assert row["title"] and row["note"], "шаг без объяснения бесполезен"
+
+
+def test_preparation_already_means_the_students_are_working():
+    """Между запуском решателей и первым решением проходит минута с лишним —
+    держать экран на «снимке» всё это время значит врать."""
+
+    rows = run_stages(status="running", progress="раунд 1/1: подготовка", persona_type="reviewer")
+    assert states(rows)["solving"] == "active"
+    assert states(rows)["snapshot"] == "done"
+
+
+def test_a_long_stage_shows_how_much_is_done():
+    rows = run_stages(
+        status="running", progress="раунд 1/1: решают профили (2)", persona_type="reviewer", personas=4
+    )
+    solving = next(row for row in rows if row["key"] == "solving")
+    assert "Готово: 2 из 4" in solving["note"]
+
+
+def test_grading_counts_include_the_repeats():
+    rows = run_stages(
+        status="running", progress="раунд 1/1: предварительное ревью решений (5)",
+        persona_type="reviewer", personas=4, samples=3,
+    )
+    grading = next(row for row in rows if row["key"] == "grading")
+    assert "Готово: 5 из 12" in grading["note"]
+
+
+def test_a_finished_stage_does_not_carry_a_counter():
+    rows = run_stages(status="completed", progress="готово", persona_type="reviewer")
+    assert not [row for row in rows if "Готово:" in row["note"]]

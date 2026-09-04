@@ -44,6 +44,8 @@ def assignment_data(assignment: Assignment, rubric: Any = None) -> dict:
 def ai_run_data(run: Any, recommendations: list | None = None) -> dict:
     """Прогон AI-персон. Рекомендации отдаются только там, где их запросили."""
 
+    from .services.task_ai import run_stages
+
     data = {
         "id": str(run.id),
         "assignment_id": str(run.assignment_id),
@@ -51,6 +53,13 @@ def ai_run_data(run: Any, recommendations: list | None = None) -> dict:
         "persona_type": run.persona_type,
         "status": run.status,
         "progress": run.progress,
+        "stages": run_stages(
+            status=run.status,
+            progress=run.progress,
+            persona_type=run.persona_type,
+            samples=run.samples or 1,
+            personas=len(run.personas or []) or 4,
+        ),
         "summary": run.summary or None,
         "personas": run.personas or [],
         "samples": run.samples or 1,

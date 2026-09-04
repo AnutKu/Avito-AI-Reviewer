@@ -141,7 +141,9 @@ const run = ref(null)
 const runs = ref([])
 const recEdit = ref(null)     // { id, value }
 const deciding = ref('')
+const isRunning = (r) => ['queued', 'running'].includes(r?.status)
 let timer = null
+let polling = false
 
 const openRecs = computed(() => openRecommendations(run.value))
 const decidedRecs = computed(() => decidedRecommendations(run.value))
@@ -153,6 +155,23 @@ async function loadList() {
   try {
     ;[rows.value, courses.value] = await Promise.all([api('/methodist/assignments'), api('/methodist/courses')])
   } catch (e) { error.value = e.message } finally { loading.value = false }
+  watchActiveRuns()
+}
+
+async function refreshRuns() {
+  if (!draft.value?.id) return
+  try { runs.value = await api(`/methodist/assignments/${draft.value.id}/ai-runs`) } catch { /* не критично */ }
+}
+
+// Пока хоть один прогон идёт, список в редакторе и в банке обновляется сам:
+// иначе строка «проверка идёт» висит до перезагрузки, хотя прогон давно готов.
+let listTimer = null
+function watchActiveRuns() {
+  clearInterval(listTimer)
+  listTimer = setInterval(async () => {
+    if (view.value === 'editor' && runs.value.some(isRunning)) await refreshRuns()
+    else if (view.value === 'list' && rows.value.some(r => isRunning(r.last_run))) await loadList()
+  }, 4000)
 }
 
 async function openEditor() {
@@ -163,6 +182,7 @@ async function openEditor() {
   draft.value = toDraft(row)
   saved.value = JSON.parse(JSON.stringify(draft.value))
   try { runs.value = await api(`/methodist/assignments/${row.id}/ai-runs`) } catch { runs.value = [] }
+  watchActiveRuns()
 }
 
 async function openRun() {
@@ -174,26 +194,44 @@ async function openRun() {
   } catch (e) { error.value = e.message }
 }
 
+// Опрос живёт, пока прогон не закончился. Интервал, а не цепочка таймаутов:
+// цепочка держится на том, что каждый шаг успешно перезапустит следующий, и
+// один пропущенный перезапуск останавливал обновление до перезагрузки страницы.
+// Интервал же снимается ровно в одном месте — когда ждать больше нечего.
 function schedulePoll(id) {
-  clearTimeout(timer)
-  // Опрос идёт только пока есть что ждать: завершённый прогон дальше не
-  // меняется, а лишние запросы — это только шум в логах.
-  if (!['queued', 'running'].includes(run.value?.status)) return
-  timer = setTimeout(async () => {
-    try { run.value = await api(`/methodist/ai-runs/${id}`) } catch { /* сеть моргнула — попробуем ещё */ }
-    schedulePoll(id)
+  stopPoll()
+  if (!isRunning(run.value)) return
+  timer = setInterval(async () => {
+    if (polling) return                      // предыдущий ответ ещё не пришёл
+    polling = true
+    try {
+      run.value = await api(`/methodist/ai-runs/${id}`)
+      if (!isRunning(run.value)) { stopPoll(); refreshRuns() }
+    } catch { /* сеть моргнула — следующий тик попробует снова */ }
+    finally { polling = false }
   }, 2000)
 }
 
+function stopPoll() { clearInterval(timer); timer = null }
+
+// Вкладку могли свернуть: браузер тормозит таймеры фоновых вкладок, и по
+// возвращении экран показывал бы устаревшее состояние.
+function onVisible() {
+  if (document.visibilityState === 'visible' && isRunning(run.value) && props.sub[0] === 'run') {
+    schedulePoll(props.sub[1])
+  }
+}
+
 watch(() => props.sub.join('/'), () => {
-  clearTimeout(timer)
+  stopPoll()
   error.value = ''
   if (view.value === 'list') loadList()
   if (view.value === 'editor') openEditor()
   if (view.value === 'run') openRun()
 }, { immediate: true })
 
-onUnmounted(() => clearTimeout(timer))
+document.addEventListener('visibilitychange', onVisible)
+onUnmounted(() => { stopPoll(); clearInterval(listTimer); document.removeEventListener('visibilitychange', onVisible) })
 
 // --- действия списка ------------------------------------------------------
 
@@ -594,8 +632,8 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 
         <article class="card">
           <h2 class="tb-block-title">Эталон и ориентиры</h2>
-          <label>Эталонное решение — скрыто от студента<textarea v-model="draft.authoring.reference_solution" rows="4" /></label>
-          <label>Заметки для ревьюеров<textarea v-model="draft.authoring.reviewer_notes" rows="3" /></label>
+          <label>Эталонное решение — скрыто от студента<textarea v-model="draft.authoring.reference_solution" rows="10" /></label>
+          <label>Заметки для ревьюеров — спорные места, на что смотреть, как калибровать<textarea v-model="draft.authoring.reviewer_notes" rows="8" /></label>
         </article>
       </div>
 
@@ -645,23 +683,32 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 
     <p v-if="run.stale" class="cap-hint">ⓘ Результаты относятся к версии задания №{{ run.revision }}. Черновик с тех пор изменён — часть выводов может быть неактуальна.</p>
 
-    <article v-if="['queued', 'running'].includes(run.status)" class="card tb-progress">
-      <span class="tb-spinner" />
-      <div>
-        <b>{{ run.progress || 'прогон идёт' }}</b>
-        <small>Запущено {{ formatDate(run.created_at, true) }} · версия задания №{{ run.revision }}. Страницу можно закрыть — прогон продолжается на сервере.</small>
+    <article v-if="run.stages?.length && run.status !== 'completed'" class="card">
+      <div class="card-title">
+        <div>
+          <h2>{{ run.status === 'failed' ? 'Проверка остановилась' : 'Что происходит сейчас' }}</h2>
+          <p>{{ PERSONA_TYPE[run.persona_type] }} · запущено {{ formatDate(run.created_at, true) }} · версия задания №{{ run.revision }}</p>
+        </div>
+        <button class="secondary" @click="go()">Вернуться в банк</button>
       </div>
-      <button class="secondary" @click="go()">Вернуться в банк</button>
+
+      <ol class="tb-pipeline">
+        <li v-for="step in run.stages" :key="step.key" :class="step.state">
+          <span class="tb-step-mark">
+            <template v-if="step.state === 'done'">✓</template>
+            <template v-else-if="step.state === 'failed'">×</template>
+            <i v-else-if="step.state === 'active'" class="tb-spinner" />
+          </span>
+          <span class="tb-step-body"><b>{{ step.title }}</b><small>{{ step.note }}</small></span>
+        </li>
+      </ol>
+
+      <p v-if="run.status === 'failed'" class="tb-warn">{{ run.error }} Черновик сохранён и не изменился.</p>
+      <p v-else class="tb-side-note">Страницу можно закрыть — прогон продолжается на сервере.</p>
+      <div v-if="run.status === 'failed'" class="tb-head-actions"><button class="secondary" @click="go(run.assignment_id)">Вернуться к редактированию</button></div>
     </article>
 
-    <article v-else-if="run.status === 'failed'" class="card tb-failed">
-      <h2>Проверка не удалась</h2>
-      <p>{{ run.error }}</p>
-      <p class="tb-side-note">Черновик сохранён и не изменился.</p>
-      <div class="tb-head-actions"><button class="secondary" @click="go(run.assignment_id)">Вернуться к редактированию</button></div>
-    </article>
-
-    <template v-else>
+    <template v-if="run.status === 'completed'">
       <article class="card" :class="run.summary?.verdict === 'ok' ? 'tb-ok' : 'tb-attention'">
         <h2>{{ run.summary?.verdict === 'ok' ? '✓ ' : '⚠ ' }}{{ run.summary?.headline }}</h2>
         <p class="tb-what">{{ runIntro(run.persona_type) }}</p>
@@ -862,6 +909,22 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
   border: 0; border-top: 1px solid #f0f0f4; background: none; padding: 8px 0; cursor: pointer; font: inherit; font-size: 11px; }
 .tb-runrow span { font-weight: 700; } .tb-runrow span.ok { color: #087448; } .tb-runrow span.bad { color: var(--red); } .tb-runrow span.wait { color: #7c3aed; }
 .tb-runrow small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+
+/* Конвейер агентов: методисту важно не «раунд 1/1», а кто сейчас работает и
+   зачем. Поэтому шаг — это строка «кто · что делает», а не техническая метка. */
+.tb-pipeline { list-style: none; margin: 14px 0 0; padding: 0; }
+.tb-pipeline li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; position: relative; }
+.tb-pipeline li + li { border-top: 1px solid #f0f0f4; }
+.tb-step-mark { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 50%;
+  background: #f3f4f8; color: #b7b7c6; font-size: 13px; font-weight: 700; }
+.tb-pipeline li.done .tb-step-mark { background: #e7f8f0; color: #087448; }
+.tb-pipeline li.failed .tb-step-mark { background: #fee2e2; color: #b91c1c; }
+.tb-pipeline li.active .tb-step-mark { background: #f2e8fc; }
+.tb-step-mark .tb-spinner { width: 14px; height: 14px; display: block; }
+.tb-step-body b { display: block; font-size: 13px; }
+.tb-step-body small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 3px; }
+.tb-pipeline li.pending .tb-step-body b, .tb-pipeline li.pending .tb-step-body small { color: #b7b7c6; }
+.tb-pipeline li.active .tb-step-body b { color: var(--purple); }
 
 .tb-progress { display: flex; align-items: center; gap: 14px; }
 .tb-progress small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; line-height: 1.5; }

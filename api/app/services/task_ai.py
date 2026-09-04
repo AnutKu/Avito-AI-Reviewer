@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -342,6 +343,107 @@ def score_spread(result: dict) -> list[dict]:
             }
         )
     return sorted(rows, key=lambda r: -r["spread"])
+
+
+# Что делает конвейер агентов, по шагам. Движок сообщает прогресс строкой вида
+# «раунд 1/1: решают профили (4)» — для отладки годится, для методиста нет: он
+# не знает ни про раунды, ни про профили. Поэтому строка сводится к шагу, а шаг
+# объясняется тем, что агент на нём делает. Незнакомая формулировка не ломает
+# картину: показывается исходный текст, просто без подсветки шага.
+STAGE_KEYWORDS = (
+    ("ревью решений", "grading"),
+    ("критик", "critique"),
+    ("решают", "solving"),
+    # «Подготовка» — это момент, когда решателей уже запустили, а первое решение
+    # ещё не вернулось. Держать экран на «снимке» всё это время (а это минута с
+    # лишним) — врать: агенты уже работают.
+    ("подготовка", "solving"),
+)
+
+# Хвост «(4)» в сообщении движка — это счётчик готовых решений или оценок.
+_COUNT = re.compile(r"\((\d+)\)\s*$")
+
+
+def current_stage(progress: str) -> str | None:
+    text = (progress or "").lower()
+    for needle, stage in STAGE_KEYWORDS:
+        if needle in text:
+            return stage
+    return "snapshot" if text else None
+
+
+def stage_count(progress: str) -> int | None:
+    match = _COUNT.search(progress or "")
+    return int(match.group(1)) if match else None
+
+
+def run_stages(
+    *, status: str, progress: str, persona_type: str, samples: int = 1, personas: int = 4
+) -> list[dict]:
+    """Конвейер прогона: что уже сделано, что идёт сейчас, что впереди."""
+
+    repeats = f" × {samples} повтор(а)" if samples > 1 else ""
+    plan = [
+        (
+            "snapshot",
+            "Снимок задания",
+            "Условие и критерии замораживаются: дальше правки не влияют на этот разбор.",
+        ),
+        (
+            "solving",
+            "AI-студенты решают",
+            f"{personas} профиля — от добросовестного до формалиста. "
+            "Видят только то, что видит студент.",
+        ),
+        (
+            "grading",
+            "AI-ревьюеры оценивают",
+            f"Каждое решение по вашей рубрике{repeats}. "
+            "Отмечают, где балл не поставить однозначно.",
+        ),
+        (
+            "critique",
+            "Критик ищет слабые места",
+            "Сравнивает решения и оценки и формулирует, что чинить в задании и критериях.",
+        ),
+        (
+            "report",
+            "Сборка рекомендаций",
+            "Находки превращаются в правки, которые можно применить или отклонить.",
+        ),
+    ]
+    # Прогон на студентах решения тоже оценивает — без оценок критику не на что
+    # опереться, — но говорить об этом отдельным шагом методисту незачем.
+    if persona_type == "student":
+        plan = [row for row in plan if row[0] != "grading"]
+
+    keys = [row[0] for row in plan]
+    if status == "completed":
+        active = len(keys)
+    elif status == "failed":
+        active = keys.index(current_stage(progress) or "snapshot") if current_stage(progress) in keys else 0
+    else:
+        stage = current_stage(progress)
+        active = keys.index(stage) if stage in keys else 0
+
+    done_now = stage_count(progress)
+    rows = []
+    for index, (key, title, note) in enumerate(plan):
+        if status == "failed" and index == active:
+            state = "failed"
+        elif index < active:
+            state = "done"
+        elif index == active:
+            state = "active"
+        else:
+            state = "pending"
+        # На идущем шаге показываем, сколько уже готово: без этого длинная стадия
+        # выглядит как зависшая.
+        if state == "active" and done_now and key in ("solving", "grading"):
+            total = personas if key == "solving" else personas * max(1, samples)
+            note = f"{note} Готово: {done_now} из {total}."
+        rows.append({"key": key, "title": title, "note": note, "state": state})
+    return rows
 
 
 def sampling_spread(result: dict) -> list[dict]:
