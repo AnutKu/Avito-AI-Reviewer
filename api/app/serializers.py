@@ -145,12 +145,25 @@ def blitz_data(session: BlitzSession | None, telemetry: dict | None = None) -> d
     }
 
 
+def review_max_score(review: Review | None) -> float | None:
+    """Максимум по рубрике этого ревью — знаменатель итогового балла.
+
+    Раньше интерфейс писал «из 10» в разметке. Методист заводит критерии с
+    любой суммой, так что это было просто неверно у любой рубрики, кроме
+    десятибалльной. Отдаём настоящий максимум; где его нет (рубрика не
+    привязана), возвращаем None, и знаменатель не показывается вовсе.
+    """
+
+    return review.rubric_version.max_score if review and review.rubric_version else None
+
+
 def review_data(review: Review, include_internal: bool = True) -> dict:
     data = {
         "id": str(review.id),
         "submission_id": str(review.submission_id),
         "ai_status": review.ai_status,
         "final_score": review.final_score,
+        "max_score": review_max_score(review),
         "final_feedback": review.final_feedback,
         "completed_at": iso(review.completed_at),
     }

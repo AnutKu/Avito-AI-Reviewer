@@ -171,6 +171,10 @@ class Review(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = now_col()
 
+    # Нужна ради максимума по рубрике: знаменатель балла берётся отсюда, а не
+    # зашивается в интерфейс. Рубрика неизменяема, так что версия ревью —
+    # ровно та шкала, по которой работу оценивали.
+    rubric_version: Mapped[RubricVersion] = relationship()
     items: Mapped[list[ReviewItem]] = relationship(
         back_populates="review", cascade="all, delete-orphan", order_by="ReviewItem.position"
     )

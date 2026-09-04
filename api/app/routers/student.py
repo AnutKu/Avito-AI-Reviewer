@@ -103,6 +103,10 @@ def assignments(user: User = Depends(student_guard), db: Session = Depends(get_d
             )
         )
         data = assignment_data(assignment)
+        # Критерии списку не нужны, а максимум нужен: без него балл не с чем
+        # сопоставить, и раньше интерфейс дорисовывал «из 10» сам.
+        rubric = db.get(RubricVersion, assignment.current_rubric_version_id)
+        data["max_score"] = rubric.max_score if rubric else None
         data["submission"] = submission_data(submission) if submission else None
         if submission and submission.status == SubmissionStatus.COMPLETED:
             review = db.scalar(select(Review).where(Review.submission_id == submission.id))

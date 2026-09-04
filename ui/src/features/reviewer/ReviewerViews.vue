@@ -194,10 +194,24 @@ async function saveFraudDecision() {
 async function complete() {
   try {
     const result = await api(`/reviewer/reviews/${current.value.review.id}/complete`, { method: 'POST', body: JSON.stringify({ feedback: feedback.value }) })
-    notice.value = `Ревью опубликовано · ${result.score} из 10`
+    notice.value = `Ревью опубликовано · ${result.score}${result.max_score != null ? ` из ${result.max_score}` : ''}`
     current.value.submission.status = 'completed'
   } catch (e) { error.value = e.message }
 }
+
+// Что действительно требует внимания на этой работе. Раньше блок висел всегда
+// с постоянным текстом и советовал проверить то, чего в работе могло не быть.
+const snapshotFiles = computed(() => current.value?.snapshot?.parsed_facts?.files || [])
+const needsAttention = computed(() => {
+  const items = current.value?.review?.items || []
+  const unsure = items.filter(i => i.confidence === 'low' && i.reviewer_action === 'pending')
+  const signals = (current.value?.review?.signals || []).filter(s => s.reviewer_decision === 'pending')
+  const notes = []
+  if (unsure.length) notes.push(`критериев с низкой уверенностью: ${unsure.length}`)
+  if (signals.length) notes.push(`нерешённых AI-сигналов: ${signals.length}`)
+  if (current.value?.review?.ai_status === 'failed') notes.push('AI-разбор не выполнен')
+  return notes
+})
 
 watch(() => props.active, value => {
   error.value = ''
@@ -235,7 +249,7 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
       <button v-for="item in history" :key="item.id" class="table-row" :disabled="!item.is_current || item.status === 'completed'" @click="item.is_current && item.status !== 'completed' && openReview(item.id)">
         <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}</small></span></span>
         <StatusBadge :status="item.status" />
-        <span><b>{{ item.final_score ?? '—' }}</b><small v-if="item.final_score != null">из 10</small></span>
+        <span><b>{{ item.final_score ?? '—' }}</b><small v-if="item.final_score != null && item.max_score != null">из {{ item.max_score }}</small></span>
         <span><b>{{ formatDate(item.submitted_at, true) }}</b><small v-if="item.completed_at">проверено {{ formatDate(item.completed_at, true) }}</small></span>
         <strong class="row-arrow">{{ item.is_current && item.status !== 'completed' ? '→' : '' }}</strong>
       </button>
@@ -249,12 +263,12 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
     <div v-if="notice" class="toast-success">✓ {{ notice }}<button @click="notice = ''">×</button></div>
     <div v-if="error" class="toast-error">{{ error }}<button @click="error = ''">×</button></div>
     <div class="review-workspace">
-      <article class="notebook-panel"><header><div class="file-tab"><span>◇</span>solution.ipynb</div><a :href="current.submission.source_url" target="_blank">GitHub ↗</a></header><pre>{{ current.snapshot.content }}</pre><footer><span>Снапшот сохранён {{ formatDate(current.snapshot.fetched_at, true) }}</span><span>Повторных запросов к GitHub нет</span></footer></article>
+      <article class="notebook-panel"><header><div class="file-tab" :title="snapshotFiles.join('\n')"><span>◇</span>{{ snapshotFiles[0] || 'Снапшот решения' }}<i v-if="snapshotFiles.length > 1">+{{ snapshotFiles.length - 1 }}</i></div><a :href="current.submission.source_url" target="_blank">GitHub ↗</a></header><pre>{{ current.snapshot.content }}</pre><footer><span>Снапшот сохранён {{ formatDate(current.snapshot.fetched_at, true) }}</span><span>Повторных запросов к GitHub нет</span></footer></article>
       <aside class="review-panel">
         <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР · {{ current.review.is_demo ? 'ДЕМО-ФИКСТУРА' : 'Z.AI' }}</span><b>{{ current.review.summary || (current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован') }}</b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
         <div v-if="current.review.is_demo" class="fixture-note">Эта карточка — неизменяемый демонстрационный пример. Новые сдачи проверяются реальной моделью Z.AI.</div>
         <div v-if="current.review.ai_status === 'failed'" class="toast-error">Z.AI: {{ current.review.ai_error }}</div>
-        <section class="attention-panel"><h3><span>!</span> Панель внимания</h3><p>Проверьте критерии с низкой уверенностью и отдельный AI-сигнал.</p></section>
+        <section v-if="needsAttention.length" class="attention-panel"><h3><span>!</span> Панель внимания</h3><p>{{ needsAttention.join(' · ') }}</p></section>
 
         <section v-if="current.detection" class="review-section detection-panel">
           <div class="section-title"><h2>Признаки использования AI</h2><span>На балл не влияет</span></div>

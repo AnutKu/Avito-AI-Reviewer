@@ -31,7 +31,14 @@ from ..models import (
     User,
 )
 from ..security import require
-from ..serializers import blitz_data, detection_data, iso, review_data, submission_data
+from ..serializers import (
+    blitz_data,
+    detection_data,
+    iso,
+    review_data,
+    review_max_score,
+    submission_data,
+)
 from ..services import blitz_telemetry
 from ..services.status import overdue_risk, transition
 from ..services.ai_reviewer_client import (
@@ -178,6 +185,7 @@ def history(user: User = Depends(reviewer_guard), db: Session = Depends(get_db))
         data = submission_data(submission, user.full_name)
         data["ai_status"] = review.ai_status if review else "failed"
         data["final_score"] = review.final_score if review else None
+        data["max_score"] = review_max_score(review)
         data["completed_at"] = iso(review.completed_at) if review else None
         data["is_current"] = bool(active and active.reviewer_id == user.id)
         result.append(data)
@@ -604,4 +612,9 @@ def complete(
         )
     )
     db.commit()
-    return {"ok": True, "score": review.final_score, "status": submission.status}
+    return {
+        "ok": True,
+        "score": review.final_score,
+        "max_score": review_max_score(review),
+        "status": submission.status,
+    }

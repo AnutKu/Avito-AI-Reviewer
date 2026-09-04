@@ -142,7 +142,7 @@ onUnmounted(() => {
           <span class="assignment-main"><small>{{ item.course }}</small><b>{{ item.title }}</b><em>Дедлайн {{ formatDate(item.deadline_at) }}</em></span>
           <StatusBadge v-if="item.submission" :status="item.submission.status" :labels="studentLabels" />
           <span v-else class="status status--new"><i />Не сдана</span>
-          <span class="assignment-score"><b>{{ item.score ?? '—' }}</b><small>из 10</small></span><strong class="row-arrow">→</strong>
+          <span class="assignment-score"><b>{{ item.score ?? '—' }}</b><small v-if="item.max_score != null">из {{ item.max_score }}</small></span><strong class="row-arrow">→</strong>
         </button>
       </div>
     </template>
@@ -158,7 +158,7 @@ onUnmounted(() => {
 
     <template v-else-if="mode === 'result' && result">
       <button class="back" @click="mode = 'list'">← Все задания</button>
-      <div class="result-hero"><div><span class="eyebrow">РАБОТА ПРОВЕРЕНА</span><h1>{{ result.submission.assignment }}</h1><p>Ревьюер подтвердил результат и опубликовал обратную связь</p></div><div class="big-score"><b>{{ result.review.final_score }}</b><small>из 10</small></div></div>
+      <div class="result-hero"><div><span class="eyebrow">РАБОТА ПРОВЕРЕНА</span><h1>{{ result.submission.assignment }}</h1><p>Ревьюер подтвердил результат и опубликовал обратную связь</p></div><div class="big-score"><b>{{ result.review.final_score }}</b><small v-if="result.review.max_score != null">из {{ result.review.max_score }}</small></div></div>
       <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b>{{ criterion.title }}</b><p>{{ criterion.comment }}</p></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2><p>{{ result.review.final_feedback }}</p><div class="human-note"><span>✓</span>Подтверждено ревьюером</div></aside></div>
     </template>
     <p v-if="error" class="form-error floating">{{ error }}</p>

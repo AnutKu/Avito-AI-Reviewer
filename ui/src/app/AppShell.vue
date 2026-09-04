@@ -22,7 +22,10 @@ const roleNames = { student: 'Студент', reviewer: 'Ревьюер', metho
     </aside>
     <section class="workspace">
       <header class="topbar">
-        <div class="course-switch"><span>Курс</span><b>Аналитика данных · 2026</b><i>⌄</i></div>
+        <!-- Здесь стоял «Курс · Аналитика данных · 2026» с кареткой выпадающего
+             списка. Переключения курсов нет ни в одной роли, а название было
+             зашито в разметку и не совпадало бы с курсом методиста. -->
+        <div class="course-switch"><b>AI Reviewer</b></div>
         <div class="top-actions">
           <div class="notification-wrap">
             <button class="icon-button" aria-label="Уведомления" @click="showNotifications = !showNotifications">♢<i v-if="notifications.some(n => !n.read)" /></button>
