@@ -10,6 +10,7 @@ from .models import Base
 from .routers import auth, common, methodist, reviewer, student
 from .seed import seed_demo
 from .services.review_pipeline import recover_orphaned_detections, recover_orphaned_reviews
+from .services.task_ai import recover_orphaned_runs
 
 # Точечные ALTER для колонок, добавленных после первого релиза, — чтобы
 # существующий demo-volume поднялся без пересоздания (Alembic в MVP нет).
@@ -22,6 +23,8 @@ _COLUMN_MIGRATIONS = (
     "WHERE a.published_at IS NULL "
     "AND EXISTS (SELECT 1 FROM submissions s WHERE s.assignment_id = a.id)",
     "ALTER TABLE rubric_versions ADD COLUMN IF NOT EXISTS assignment_snapshot JSONB "
+    "NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE assignments ADD COLUMN IF NOT EXISTS authoring JSONB "
     "NOT NULL DEFAULT '{}'::jsonb",
 )
 
@@ -41,6 +44,7 @@ async def lifespan(app: FastAPI):
     # висит в running навсегда и её нельзя ни перезапустить, ни завершить.
     recover_orphaned_reviews()
     recover_orphaned_detections()
+    recover_orphaned_runs()
     yield
 
 

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -332,6 +332,12 @@ class ValidationConfigIn(BaseModel):
     personas: list[str] | None = Field(
         default=None, description="ключи профилей решателей; null — набор по умолчанию"
     )
+    persona_type: Literal["student", "reviewer"] = Field(
+        default="reviewer",
+        description="За один прогон проверяется что-то одно: student — понятна ли постановка "
+        "задания, reviewer — однозначны ли критерии. Тип задаёт фокус критика; "
+        "решатели нужны обоим, потому что без решений сравнивать нечего.",
+    )
     max_rounds: int = Field(default=2, ge=1, le=4)
     token_budget: int = Field(default=200_000, ge=10_000)
     model_fast: str | None = None
@@ -402,6 +408,33 @@ class PersonaOut(BaseModel):
     key: str
     title: str
     description: str
+
+
+# --------------------------------------------------------------------------- #
+#  Точечная помощь по одному блоку задания
+# --------------------------------------------------------------------------- #
+
+
+class FieldAssistIn(BaseModel):
+    """Заполнить или улучшить ОДИН блок задания.
+
+    Сервис ничего не хранит и ничего не переписывает: возвращает предложение,
+    решение принимает человек на стороне кабинета.
+    """
+
+    field: str = Field(description="человекочитаемое имя блока: «Условие», «Критерий: …»")
+    mode: Literal["fill", "improve"] = "fill"
+    current: str = Field(default="", description="что сейчас в блоке; для fill обычно пусто")
+    instruction: str = Field(default="", description="чего добиться — например, текст рекомендации")
+    context: dict[str, Any] = Field(
+        default_factory=dict, description="уже заполненные блоки задания: title, statement, …"
+    )
+
+
+class FieldAssistOut(BaseModel):
+    field: str
+    proposed: str
+    note: str = Field(default="", description="одной строкой: что изменено и почему")
 
 
 # --------------------------------------------------------------------------- #

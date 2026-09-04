@@ -11,12 +11,16 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents import roles
 from app.agents.personas import PERSONAS
 from app.config import settings
 from app.db import SessionLocal, get_session
+from app.llm import LLMClient
 from app.schemas import (
     CourseIdeaIn,
     DecisionsIn,
+    FieldAssistIn,
+    FieldAssistOut,
     GenerateTaskIn,
     GraderOutput,
     GradeSolutionIn,
@@ -50,6 +54,17 @@ async def healthz() -> dict:
 @router.get("/personas", response_model=list[PersonaOut], tags=["meta"])
 async def list_personas() -> list[PersonaOut]:
     return [PersonaOut(key=p.key, title=p.title, description=p.description) for p in PERSONAS.values()]
+
+
+@router.post("/assist/field", response_model=FieldAssistOut, tags=["meta"])
+async def assist_field(body: FieldAssistIn) -> FieldAssistOut:
+    """Заполнить или улучшить один блок задания.
+
+    Без состояния: сервис ничего не хранит и ничего не перезаписывает —
+    возвращает предложение, которое подтверждает или отклоняет человек.
+    """
+
+    return await asyncio.to_thread(roles.assist_field, LLMClient(), body)
 
 
 # --------------------------------------------------------------------------- #

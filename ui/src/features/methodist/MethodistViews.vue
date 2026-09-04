@@ -1,11 +1,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
-import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
-import TaskCreaterView from './TaskCreaterView.vue'
+import TaskBank from './TaskBank.vue'
 
-const props = defineProps({ active: String })
+const props = defineProps({ active: String, sub: { type: Array, default: () => [] } })
+defineEmits(['navigate'])
 const report = ref(null)            // объединённый дашборд: обзор + качество проверки
 const dashTab = ref('overview')
 const showAllCriteria = ref(false)
@@ -19,8 +19,6 @@ const reviewerLoads = ref([])
 const autoAssign = ref(false)
 const registry = ref([])
 const registrySearch = ref('')
-const assignments = ref([])
-const courses = ref([])
 const course = ref(null)
 const error = ref('')
 const notice = ref('')
@@ -46,9 +44,6 @@ async function load(active = props.active) {
       reviewerLoads.value = s.reviewers
       distribution.value = s.waiting.map(r => ({ ...r, chosen: r.reviewer?.id || '' }))
       assignedRows.value = s.assigned.map(r => ({ ...r, chosen: r.reviewer.id }))
-    }
-    if (active === 'methodist-rubrics') {
-      ;[assignments.value, courses.value] = await Promise.all([api('/methodist/assignments'), api('/methodist/courses')])
     }
     if (active === 'methodist-settings') course.value = await api('/methodist/course')
   } catch (e) { error.value = e.message }
@@ -160,9 +155,6 @@ const toggleGroup = (id) => { openGroups.value.has(id) ? openGroups.value.delete
 // При активном поиске/фильтре раскрываем все совпавшие группы — иначе строки
 // прячутся под свёрнутым заголовком и кажется, что поиск не работает.
 const isGroupOpen = (id) => !!registrySearch.value.trim() || !!statusFilter.value || openGroups.value.has(id)
-const openCards = ref(new Set())
-const toggleCard = (id) => { openCards.value.has(id) ? openCards.value.delete(id) : openCards.value.add(id) }
-const isCardOpen = (id) => openCards.value.has(id)
 const filteredRegistry = computed(() => {
   const q = registrySearch.value.trim().toLowerCase()
   const sf = statusFilter.value
@@ -174,12 +166,6 @@ const filteredRegistry = computed(() => {
     })
     .filter(g => g.rows.length)
 })
-const courseGroups = computed(() => {
-  const map = {}
-  for (const a of assignments.value) (map[a.course] ||= []).push(a)
-  return map
-})
-
 async function toggleAuto() {
   try {
     const res = await api('/methodist/distribution/auto', { method: 'POST', body: JSON.stringify({ enabled: !autoAssign.value }) })
@@ -235,96 +221,6 @@ async function toggleAvailability(person) {
         : (person.available ? `${person.name}: снят с распределения` : `${person.name}: снова в распределении`)
       await load()
     }
-  } catch (e) { error.value = e.message }
-}
-
-// --- задания и критерии ---------------------------------------------------
-const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '' })
-const showNewAssignment = ref(false)
-const draft = ref(null)
-const editAssignmentId = ref('')
-const assignmentEdit = ref(null)
-const criteriaEditId = ref('')
-const criteriaDraft = ref([])
-
-function toggleNewAssignment() {
-  if (showNewAssignment.value) { showNewAssignment.value = false; return }
-  draft.value = {
-    course_id: courses.value[0]?.id || '',
-    title: '', statement: '', deadline_at: '', effort_weight: 1, submission_channel: 'github',
-    pass_score: 6, criteria: [emptyCriterion()],
-  }
-  showNewAssignment.value = true
-}
-async function createAssignment() {
-  const d = draft.value
-  try {
-    await api('/methodist/assignments', { method: 'POST', body: JSON.stringify({
-      course_id: d.course_id || null, title: d.title, statement: d.statement,
-      deadline_at: d.deadline_at ? new Date(d.deadline_at).toISOString() : null,
-      effort_weight: Number(d.effort_weight) || 1, submission_channel: d.submission_channel,
-      pass_score: Number(d.pass_score) || 0,
-      criteria: d.criteria.filter(c => c.title.trim()).map(c => ({ key: c.key, title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint })),
-    }) })
-    showNewAssignment.value = false; notice.value = 'Задание создано'; await load()
-  } catch (e) { error.value = e.message }
-}
-
-function startEditAssignment(item) {
-  editAssignmentId.value = item.id
-  assignmentEdit.value = {
-    title: item.title, statement: item.statement,
-    deadline_at: item.deadline_at ? item.deadline_at.slice(0, 16) : '',
-    effort_weight: item.effort_weight, submission_channel: item.submission_channel,
-  }
-}
-async function saveAssignment(id) {
-  const e = assignmentEdit.value
-  try {
-    await api(`/methodist/assignments/${id}`, { method: 'PATCH', body: JSON.stringify({
-      title: e.title, statement: e.statement,
-      deadline_at: e.deadline_at ? new Date(e.deadline_at).toISOString() : null,
-      effort_weight: Number(e.effort_weight) || 1, submission_channel: e.submission_channel,
-    }) })
-    editAssignmentId.value = ''; notice.value = 'Изменения сохранены'; await load()
-  } catch (err) { error.value = err.message }
-}
-
-function startCriteria(item) {
-  criteriaEditId.value = item.id
-  criteriaDraft.value = item.rubric.map(c => ({ key: c.key, title: c.title, max_score: c.max_score, student_hint: c.student_hint || '' }))
-  if (!criteriaDraft.value.length) criteriaDraft.value = [emptyCriterion()]
-}
-async function saveCriteria(item) {
-  try {
-    await api(`/methodist/assignments/${item.id}/rubrics`, { method: 'POST', body: JSON.stringify({
-      criteria: criteriaDraft.value.filter(c => c.title.trim()).map(c => ({ key: c.key || '', title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint })),
-      pass_score: item.pass_score ?? 0, note: 'Правка критериев',
-    }) })
-    criteriaEditId.value = ''; notice.value = 'Изменения сохранены'; await load()
-  } catch (e) { error.value = e.message }
-}
-
-async function publishAssignment(item, published) {
-  try {
-    await api(`/methodist/assignments/${item.id}/publish`, { method: 'POST', body: JSON.stringify({ published }) })
-    notice.value = published ? 'Задание опубликовано — видно студентам курса и в реестре работ' : 'Задание снято с публикации'
-    await load()
-  } catch (e) { error.value = e.message }
-}
-
-async function deleteAssignment(item) {
-  const works = item.submissions || 0
-  const toll = works
-    ? ` Вместе с ним будут удалены сданные работы (${works}) и все выставленные по ним оценки.`
-    : ''
-  if (!window.confirm(`Удалить задание «${item.title}» со всеми версиями критериев?${toll} Это действие необратимо.`)) return
-  try {
-    const res = await api(`/methodist/assignments/${item.id}`, { method: 'DELETE' })
-    notice.value = res.submissions
-      ? `Задание удалено вместе с работами (${res.submissions})`
-      : 'Задание удалено'
-    await load()
   } catch (e) { error.value = e.message }
 }
 
@@ -532,76 +428,7 @@ onMounted(load)
     </template>
   </section>
 
-  <section v-else-if="active === 'methodist-rubrics'">
-    <div class="page-heading"><div><h1>Банк заданий и критериев</h1></div><button class="primary" @click="toggleNewAssignment">{{ showNewAssignment ? 'Отмена' : '＋ Новое задание' }}</button></div>
-
-    <article v-if="showNewAssignment && draft" class="card rubric-card assign-form">
-      <h2>Новое задание</h2>
-      <div class="af-row">
-        <label>Название<input v-model="draft.title" /></label>
-        <label>Курс<select v-model="draft.course_id"><option v-for="c in courses" :key="c.id" :value="c.id">{{ c.title }}</option></select></label>
-      </div>
-      <label>Условие<textarea v-model="draft.statement" rows="4" /></label>
-      <div class="af-row">
-        <label>Дедлайн<input v-model="draft.deadline_at" type="datetime-local" /></label>
-        <label>Трудоёмкость<input v-model.number="draft.effort_weight" type="number" min="0.5" step="0.5" /></label>
-        <label>Канал сдачи<select v-model="draft.submission_channel"><option value="github">GitHub</option><option value="stepik">Stepik</option><option value="gdocs">Google Docs</option></select></label>
-        <label>Проходной балл<input v-model.number="draft.pass_score" type="number" min="0" /></label>
-      </div>
-      <h3 class="dist-subhead">Критерии</h3>
-      <div v-for="(c, i) in draft.criteria" :key="i" class="af-crit">
-        <input v-model="c.title" placeholder="Название критерия" />
-        <input v-model.number="c.max_score" type="number" min="0.5" step="0.5" />
-        <input v-model="c.student_hint" placeholder="Подсказка студенту (необязательно)" />
-        <button v-if="draft.criteria.length > 1" class="text-button" @click="draft.criteria.splice(i, 1)">×</button>
-      </div>
-      <button class="text-button" @click="draft.criteria.push(emptyCriterion())">＋ ещё критерий</button>
-      <div class="af-actions"><button class="primary" :disabled="!draft.title.trim() || !draft.criteria.some(c => c.title.trim())" @click="createAssignment">Создать задание</button></div>
-    </article>
-
-    <template v-for="(list, courseName) in courseGroups" :key="courseName">
-      <h2 class="dist-subhead">{{ courseName }}</h2>
-      <article v-for="item in list" :key="item.id" class="card rubric-card">
-        <button class="rubric-card-head" @click="toggleCard(item.id)">
-          <span class="reg-caret">{{ isCardOpen(item.id) || editAssignmentId === item.id || criteriaEditId === item.id ? '▾' : '▸' }}</span>
-          <span class="rubric-card-title"><b>{{ item.title }}</b><small>{{ item.rubric.length }} критериев · трудоёмкость {{ item.effort_weight }}</small></span>
-          <span class="version-pill" :class="item.published ? 'pub' : 'draft'">{{ item.published ? 'Опубликовано' : 'Черновик' }}</span>
-        </button>
-
-        <div v-if="isCardOpen(item.id) || editAssignmentId === item.id || criteriaEditId === item.id" class="rubric-card-body">
-          <template v-if="editAssignmentId === item.id && assignmentEdit">
-            <div class="card-title"><div><h2>Редактирование задания</h2></div><div class="tc-head-actions"><button class="secondary" @click="editAssignmentId = ''">Отмена</button><button class="primary" @click="saveAssignment(item.id)">Сохранить изменения</button></div></div>
-            <label>Название<input v-model="assignmentEdit.title" /></label>
-            <label>Условие<textarea v-model="assignmentEdit.statement" rows="4" /></label>
-            <div class="af-row">
-              <label>Дедлайн<input v-model="assignmentEdit.deadline_at" type="datetime-local" /></label>
-              <label>Трудоёмкость<input v-model.number="assignmentEdit.effort_weight" type="number" min="0.5" step="0.5" /></label>
-              <label>Канал<select v-model="assignmentEdit.submission_channel"><option value="github">GitHub</option><option value="stepik">Stepik</option><option value="gdocs">Google Docs</option></select></label>
-            </div>
-          </template>
-          <template v-else-if="criteriaEditId === item.id">
-            <div class="card-title"><div><h2>Критерии · {{ item.title }}</h2></div><div class="tc-head-actions"><button class="secondary" @click="criteriaEditId = ''">Отмена</button><button class="primary" @click="saveCriteria(item)">Сохранить изменения</button></div></div>
-            <div v-for="(c, i) in criteriaDraft" :key="i" class="af-crit">
-              <input v-model="c.title" placeholder="Название критерия" />
-              <input v-model.number="c.max_score" type="number" min="0.5" step="0.5" />
-              <input v-model="c.student_hint" placeholder="Подсказка студенту" />
-              <button v-if="criteriaDraft.length > 1" class="text-button" @click="criteriaDraft.splice(i, 1)">×</button>
-            </div>
-            <button class="text-button" @click="criteriaDraft.push(emptyCriterion())">＋ ещё критерий</button>
-          </template>
-          <template v-else>
-            <MarkdownText v-if="item.statement" class="rubric-statement" :text="item.statement" /><p v-else class="rubric-statement">Условие не заполнено</p>
-            <div class="rubric-summary"><span><b>{{ item.max_score ?? '—' }}</b><small>макс. балл</small></span><span><b>{{ item.rubric.length }}</b><small>критериев</small></span><span><b>{{ item.effort_weight }}</b><small>трудоёмкость</small></span><span><b>{{ item.deadline_at ? formatDate(item.deadline_at, true) : '—' }}</b><small>дедлайн</small></span></div>
-            <div class="criteria-table"><div v-for="(criterion, index) in item.rubric" :key="criterion.key"><span>{{ index + 1 }}</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></div>
-            <div class="rubric-actions"><p>{{ item.rubric_note || '—' }}</p><button v-if="!item.published" class="secondary danger" @click="deleteAssignment(item)">Удалить</button><button class="secondary" @click="startEditAssignment(item)">✎ Задание</button><button class="secondary" @click="startCriteria(item)">✎ Критерии</button><button v-if="!item.published" class="primary" @click="publishAssignment(item, true)">Опубликовать</button><button v-else class="secondary" @click="publishAssignment(item, false)">Снять с публикации</button></div>
-          </template>
-        </div>
-      </article>
-    </template>
-    <div v-if="!assignments.length && !showNewAssignment" class="empty-state"><span>✦</span><h2>Пока нет заданий</h2><p>Создайте первое кнопкой «＋ Новое задание» или отправьте из AI-конструктора заданий и критериев.</p></div>
-  </section>
-
-  <TaskCreaterView v-else-if="active === 'methodist-taskcreater'" />
+  <TaskBank v-else-if="active === 'methodist-rubrics'" :sub="sub" @navigate="$emit('navigate', $event)" />
 
   <section v-else-if="active === 'methodist-settings' && course">
     <div class="page-heading"><div><h1>Настройки курса</h1></div><button class="primary" @click="saveCourse">Сохранить изменения</button></div>

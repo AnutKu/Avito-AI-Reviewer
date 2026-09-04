@@ -33,6 +33,54 @@ def assignment_data(assignment: Assignment, rubric: Any = None) -> dict:
         "rubric": rubric.criteria if rubric else [],
         "max_score": rubric.max_score if rubric else None,
         "pass_score": rubric.pass_score if rubric else None,
+        "authoring": assignment.authoring or {},
+        # Номер версии рубрики. Кабинет его не показывает как «v2» на кнопках —
+        # версионирование внутреннее, — но результат AI-прогона обязан знать, к
+        # какой ревизии он относится, иначе устаревший разбор не отличить.
+        "revision": rubric.version if rubric else 0,
+    }
+
+
+def ai_run_data(run: Any, recommendations: list | None = None) -> dict:
+    """Прогон AI-персон. Рекомендации отдаются только там, где их запросили."""
+
+    data = {
+        "id": str(run.id),
+        "assignment_id": str(run.assignment_id),
+        "revision": run.revision,
+        "persona_type": run.persona_type,
+        "status": run.status,
+        "progress": run.progress,
+        "summary": run.summary or None,
+        "personas": run.personas or [],
+        "metrics": run.metrics or {},
+        "error": run.error,
+        "created_at": iso(run.created_at),
+        "completed_at": iso(run.completed_at),
+    }
+    if recommendations is not None:
+        data["recommendations"] = [recommendation_data(item) for item in recommendations]
+    return data
+
+
+def recommendation_data(row: Any) -> dict:
+    return {
+        "id": str(row.id),
+        "run_id": str(row.run_id),
+        "target_type": row.target_type,
+        "target_id": row.target_id,
+        "target_field": row.target_field,
+        "severity": row.severity,
+        "problem": row.problem,
+        "evidence": row.evidence or [],
+        "original_value": row.original_value,
+        "proposed_value": row.proposed_value,
+        "final_value": row.final_value,
+        "expected_effect": row.expected_effect,
+        "status": row.status,
+        "rejection_reason": row.rejection_reason,
+        "kind": (row.payload or {}).get("finding", {}).get("kind") or "",
+        "operation": (row.payload or {}).get("operation") or "",
     }
 
 

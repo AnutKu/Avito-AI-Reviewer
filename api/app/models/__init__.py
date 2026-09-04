@@ -32,9 +32,12 @@ from .enums import (
     SubmissionStatus,
     Verdict,
 )
+from .task_ai import AiRecommendation, AiRun
 
 __all__ = [
     "AiDetection",
+    "AiRecommendation",
+    "AiRun",
     "AiSignal",
     "AiStatus",
     "Assignment",

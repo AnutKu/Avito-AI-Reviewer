@@ -125,7 +125,15 @@ async def critic(state: GraphState) -> dict:
     solutions = list(state["solutions"])
     gradings = list(state["gradings"])
 
-    out = await asyncio.to_thread(roles.critique, c.llm, state["task_data"], working, gradings, solutions)
+    out = await asyncio.to_thread(
+        roles.critique,
+        c.llm,
+        state["task_data"],
+        working,
+        gradings,
+        solutions,
+        cfg.get("persona_type", "reviewer"),
+    )
 
     artifact = RoundArtifact(
         round_no=state["round_no"],
