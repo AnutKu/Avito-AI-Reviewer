@@ -272,3 +272,9 @@ h1, h2, h3, p { margin-top: 0; }
 .md .md-head { font-weight: 700; margin: 9px 0 4px; }
 .md .md-head[data-level="1"] { font-size: 1.15em; }
 .md .md-head[data-level="2"] { font-size: 1.08em; }
+/* Формула из ответа модели. Выключная — своей строкой по центру, строчная
+   идёт в потоке текста. Моноширинный не берём: внутри слова целиком
+   («Выручка от маркетинга»), и моноширинный их только растянет. */
+.md-math { font-variant-numeric: tabular-nums; }
+.md-math--block { display: block; text-align: center; margin: 7px 0; padding: 6px 8px; background: #f7f7f9; border-radius: 7px; line-height: 1.6; }
+.md-math sub,.md-math sup { font-size: 0.75em; }

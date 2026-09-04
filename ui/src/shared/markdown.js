@@ -15,17 +15,22 @@
  * Неподдержанное остаётся видимым текстом, а не пропадает.
  */
 
+// С расширением: этот модуль гоняется не только сборщиком, но и node --test,
+// а node разрешает только точные пути.
+import { replaceMath } from './latex.js'
+
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
 
-// Метка вынутого кода. Нужен символ, которого во входном тексте не бывает:
+// Метки вынутых кусков. Нужны символы, которых во входном тексте не бывает:
 // слово вроде «code» встречается в обычной прозе и меткой служить не может.
 const CODE_MARK = '\u0000'
+const MATH_MARK = '\u0001'
 
 export function escapeHtml(text) {
   // Метка вычищается из входа до разбора — иначе её можно было бы подсунуть
   // и подменить содержимое чужой вставки кода.
   return String(text ?? '')
-    .replace(/\u0000/g, '')
+    .replace(/[\u0000\u0001]/g, '')
     .replace(/[&<>"']/g, (char) => ESCAPES[char])
 }
 
@@ -38,12 +43,21 @@ function safeHref(url) {
 }
 
 function inline(escaped) {
-  // Код вынимается до остальных правил и возвращается после: внутри `**` —
-  // это звёздочки, а не выделение.
+  // Код и формулы вынимаются до остальных правил и возвращаются после: внутри
+  // `**` — это звёздочки, а не выделение, а `x_i` в формуле — индекс, а не
+  // курсив. Код идёт первым: `$x$` в обратных кавычках остаётся как написан.
   const codes = []
   let text = escaped.replace(/`([^`]+)`/g, (_, code) => {
     codes.push(code)
     return CODE_MARK
+  })
+
+  const formulas = []
+  text = replaceMath(text, (rendered, block) => {
+    formulas.push(
+      `<span class="md-math${block ? ' md-math--block' : ''}">${rendered}</span>`,
+    )
+    return MATH_MARK
   })
 
   text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (whole, label, url) => {
@@ -57,6 +71,7 @@ function inline(escaped) {
   text = text.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
   text = text.replace(/(^|[\s(])_([^_\n]+)_/g, '$1<em>$2</em>')
 
+  text = text.replace(/\u0001/g, () => formulas.shift())
   return text.replace(/\u0000/g, () => `<code>${codes.shift()}</code>`)
 }
 
