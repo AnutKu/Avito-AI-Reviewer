@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { aiStatusNames, api, formatDate } from '../../shared/api'
 import { reviewTotals } from '../../shared/score'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
@@ -247,12 +247,28 @@ const totalMax = computed(() => current.value?.review?.max_score ?? totals.value
 
 const snapshotFiles = computed(() => current.value?.snapshot?.parsed_facts?.files || [])
 
+// Условие и критерии — справочная панель поверх экрана проверки: свериться с
+// заданием нужно, не теряя разбор и несохранённые решения по критериям.
+// Критерии здесь берутся из рубрики, а не из разбора AI, поэтому список полный
+// и доступен ещё до того, как разбор готов.
+const CHANNEL_NAMES = { github: 'Ссылка на GitHub-репозиторий', stepik: 'Stepik', gdocs: 'Google Docs' }
+const panel = ref('')
+const assignment = computed(() => current.value?.assignment || {})
+const rubric = computed(() => assignment.value.rubric || [])
+
+function onKeydown(event) { if (event.key === 'Escape') panel.value = '' }
+
 watch(() => props.active, value => {
   error.value = ''
+  panel.value = ''
   if (value === 'reviewer-queue') loadQueue()
   if (value === 'reviewer-history') loadHistory()
 })
-onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueue() })
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  props.active === 'reviewer-history' ? loadHistory() : loadQueue()
+})
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -295,7 +311,14 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
 
   <section v-else-if="active === 'reviewer-review' && current" class="review-page">
     <button class="back" @click="emit('navigate', 'reviewer-queue')">← Вернуться в очередь</button>
-    <div class="review-title"><div><h1>{{ current.submission.student }}</h1><p>{{ current.submission.assignment }} · сдано {{ formatDate(current.submission.submitted_at, true) }}</p></div><StatusBadge :status="current.submission.status" /></div>
+    <div class="review-title">
+      <div><h1>{{ current.submission.student }}</h1><p>{{ current.submission.assignment }} · сдано {{ formatDate(current.submission.submitted_at, true) }}</p></div>
+      <div class="review-title-actions">
+        <button class="secondary" @click="panel = 'statement'">Условие</button>
+        <button class="secondary" @click="panel = 'criteria'">Критерии</button>
+        <StatusBadge :status="current.submission.status" />
+      </div>
+    </div>
     <div v-if="notice" class="toast-success">✓ {{ notice }}<button @click="notice = ''">×</button></div>
     <div v-if="error" class="toast-error">{{ error }}<button @click="error = ''">×</button></div>
     <section class="score-total" :class="{ settled: totals.total && !totals.pending }">
@@ -429,6 +452,39 @@ onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueu
           <button class="secondary full" :disabled="!fraudVerdict || fraudRationale.trim().length < 20" @click="saveFraudDecision">Зафиксировать решение</button>
         </section>
         <section class="review-section feedback-editor"><div class="section-title"><h2>Обратная связь студенту</h2><span>Отправится только после подтверждения</span></div><textarea v-model="feedback" rows="7" /><div class="editor-actions"><button class="secondary" @click="rewrite">✦ Переформулировать</button><button class="primary" :disabled="current.submission.status === 'blitz_sent' || current.submission.status === 'completed'" @click="complete">Подтвердить и опубликовать</button></div></section>
+      </aside>
+    </div>
+
+    <div v-if="panel" class="drawer-backdrop" @click.self="panel = ''">
+      <aside class="drawer">
+        <header>
+          <div><span class="eyebrow">{{ assignment.title }}</span><h2>{{ panel === 'statement' ? 'Условие задания' : 'Критерии и разбалловка' }}</h2></div>
+          <button class="drawer-close" aria-label="Закрыть" @click="panel = ''">×</button>
+        </header>
+
+        <div v-if="panel === 'statement'" class="drawer-body">
+          <dl class="drawer-facts">
+            <div><dt>Формат сдачи</dt><dd>{{ CHANNEL_NAMES[assignment.submission_channel] || assignment.submission_channel || '—' }}</dd></div>
+            <div><dt>Дедлайн проверки</dt><dd>{{ assignment.deadline_at ? formatDate(assignment.deadline_at, true) : 'не задан' }}</dd></div>
+            <div><dt>Максимум за работу</dt><dd>{{ assignment.max_score ?? '—' }}</dd></div>
+            <div><dt>Порог зачёта</dt><dd>{{ assignment.pass_score ?? '—' }}</dd></div>
+          </dl>
+          <MarkdownText v-if="assignment.statement" :text="assignment.statement" />
+          <p v-else class="muted">Условие к заданию не заполнено.</p>
+          <p class="muted small">Требования к результату, ограничения и формат сдачи методист описывает в тексте условия — здесь оно показано целиком, без сокращений.</p>
+        </div>
+
+        <div v-else class="drawer-body">
+          <p class="muted">Полная рубрика с градацией по баллам. Она не зависит от AI-разбора: список доступен и до того, как разбор готов, и после утверждения оценок.</p>
+          <article v-for="criterion in rubric" :key="criterion.key" class="drawer-criterion">
+            <header><b>{{ criterion.title }}</b><strong>{{ criterion.max_score }}</strong></header>
+            <p v-if="criterion.student_hint" class="muted">{{ criterion.student_hint }}</p>
+            <div v-for="level in criterion.levels || []" :key="level.points" class="level-row"><b>{{ level.points }}</b><span><i>{{ level.label }}</i>{{ level.descriptor }}</span></div>
+            <p v-if="!criterion.levels?.length" class="muted small">Градация по баллам в рубрике не задана.</p>
+          </article>
+          <p v-if="!rubric.length" class="muted">Критерии к заданию не заведены.</p>
+          <p v-else class="drawer-total">Итого по рубрике: <b>{{ assignment.max_score ?? '—' }}</b><template v-if="assignment.pass_score != null"> · зачёт от {{ assignment.pass_score }}</template></p>
+        </div>
       </aside>
     </div>
   </section>

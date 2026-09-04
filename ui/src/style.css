@@ -202,6 +202,33 @@ h1, h2, h3, p { margin-top: 0; }
 .queue-table .table-row { grid-template-columns: minmax(260px,1.6fr) .75fr .8fr; }
 .history-table .table-row { grid-template-columns: minmax(260px,1.4fr) .7fr .55fr .7fr; }
 .table-card button.table-row:not(:disabled):hover { background: #f2f8fd; box-shadow: inset 3px 0 0 var(--blue); }
+/* Быстрый просмотр условия и критериев на экране проверки. Боковая панель, а не
+   отдельный экран: разбор, черновик обратной связи и несохранённые решения по
+   критериям остаются на месте. */
+.review-title-actions { display: flex; align-items: center; gap: 8px; }
+.review-title-actions button { padding: 8px 14px; font-size: 11px; }
+.drawer-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: flex-end; background: rgba(23,26,40,.34); }
+.drawer { display: flex; flex-direction: column; width: min(540px,100%); height: 100%; background: #fff; border-left: 1px solid var(--line); box-shadow: -18px 0 45px rgba(23,31,51,.14); }
+.drawer > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--line); }
+.drawer > header .eyebrow { display: block; color: var(--muted); font-size: 9px; letter-spacing: .08em; margin-bottom: 6px; }
+.drawer > header h2 { margin: 0; font-size: 18px; }
+.drawer-close { border: 0; background: none; color: var(--muted); font-size: 24px; line-height: 1; padding: 0 4px; cursor: pointer; }
+.drawer-close:hover { color: var(--ink); }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px 24px 32px; font-size: 12px; }
+.drawer-body .muted { font-size: 10px; }
+.drawer-body .muted.small { font-size: 9px; }
+.drawer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 18px; }
+.drawer-facts > div { background: #f8f8fa; border-radius: 10px; padding: 10px 12px; }
+.drawer-facts dt { color: var(--muted); font-size: 9px; }
+.drawer-facts dd { margin: 4px 0 0; font-size: 12px; font-weight: 700; }
+.drawer-criterion { border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; }
+.drawer-criterion > header { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
+.drawer-criterion > header b { font-size: 12px; }
+.drawer-criterion > header strong { font-size: 16px; }
+.drawer-criterion .level-row b { font-size: 11px; }
+.drawer-criterion .level-row span { font-size: 10px; }
+.drawer-total { color: var(--muted); font-size: 11px; margin: 14px 0 0; }
+.drawer-total b { color: var(--ink); font-size: 13px; }
 
 @media (max-width: 760px) {
   .login-page { padding: 18px; }.login-brand { margin: 10px 0 26px; }.login-card { display: block; }.login-copy { min-height: 300px; padding: 40px 28px; }.login-copy h1 { font-size: 38px; }.login-copy > p { font-size: 14px; }.login-art { display: none; }.login-actions { padding: 35px 25px; }
