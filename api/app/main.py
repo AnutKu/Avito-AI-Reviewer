@@ -48,12 +48,18 @@ app = FastAPI(
     description="Core domain integrated with the isolated AI reviewer service.",
     lifespan=lifespan,
 )
+# "*" со списком origin'ов несовместимо с credentials, поэтому режим "любой
+# источник" отдаём регуляркой — она отражает конкретный Origin обратно.
+_cors_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
+_cors_rule = (
+    {"allow_origin_regex": ".*"} if "*" in _cors_origins else {"allow_origins": _cors_origins}
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    **_cors_rule,
 )
 app.include_router(auth.router, prefix="/api")
 app.include_router(common.router, prefix="/api")
