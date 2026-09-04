@@ -34,7 +34,7 @@ from ..services.ai_reviewer_client import (
     AiReviewerError,
     AiReviewerUnavailable,
 )
-from ..services.review_pipeline import persist_call, run_review
+from ..services.review_pipeline import fail_stale_reviews, is_stale, persist_call, run_review
 
 router = APIRouter(prefix="/reviewer", tags=["reviewer"])
 reviewer_guard = require(Role.REVIEWER)
@@ -82,6 +82,9 @@ def review_context(db: Session, submission_id: UUID, reviewer: User) -> tuple[Su
 
 @router.get("/queue")
 def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -> list[dict]:
+    # Планировщика нет: зависшие прогоны подметаются при чтении очереди, чтобы
+    # ревьюер видел failed с понятной причиной, а не вечное «Проверка выполняется…».
+    fail_stale_reviews(db)
     rows = db.execute(
         select(Submission, ReviewAssignment)
         .join(ReviewAssignment, ReviewAssignment.submission_id == Submission.id)
@@ -100,6 +103,8 @@ def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -
         data["explanation"] = assignment.explanation
         review = db.scalar(select(Review).where(Review.submission_id == submission.id))
         data["ai_status"] = review.ai_status if review else "failed"
+        data["is_demo"] = bool(review and review.raw_result.get("demo_data", False))
+        data["model"] = review.model if review else None
         result.append(data)
     return result
 
@@ -111,6 +116,9 @@ def review_screen(
     db: Session = Depends(get_db),
 ) -> dict:
     submission, review = review_context(db, submission_id, user)
+    # То же, что в очереди: иначе зависшая запись оставит экран в состоянии
+    # «Проверка выполняется…» с заблокированным перезапуском.
+    fail_stale_reviews(db)
     if submission.status == SubmissionStatus.ASSIGNED:
         transition(db, submission, SubmissionStatus.IN_REVIEW, user, "Ревьюер открыл работу")
         db.commit()
@@ -285,7 +293,8 @@ def rerun_review(
         raise HTTPException(409, "Завершённое ревью нельзя перезапустить")
     if any(item.reviewer_action != ReviewerAction.PENDING for item in review.items):
         raise HTTPException(409, "Ревью с решениями человека нельзя перезапустить")
-    if review.ai_status == "running":
+    # Зависший прогон перезапустить можно: процесс, который его вёл, уже мёртв.
+    if review.ai_status == "running" and not is_stale(review):
         raise HTTPException(409, "AI-ревью уже выполняется")
     review.ai_status = "pending"
     review.ai_error = None

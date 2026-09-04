@@ -1,7 +1,9 @@
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from app.config import Settings
 from app.contracts import AssignmentInput, ReviewRequest, RubricInput, SnapshotInput
 from app.reviewer import ZaiInvalidResponse, ZaiNotConfigured, ZaiReviewer
 
@@ -66,6 +68,12 @@ def response(score=2):
 
 
 class ZaiReviewerTest(unittest.TestCase):
+    def test_medium_reasoning_effort_is_valid_configuration(self):
+        with patch.dict("os.environ", {"ZAI_REASONING_EFFORT": "medium"}):
+            configured = Settings(_env_file=None)
+
+        self.assertEqual(configured.zai_reasoning_effort, "medium")
+
     def test_missing_api_key_fails_explicitly(self):
         with self.assertRaises(ZaiNotConfigured):
             ZaiReviewer()

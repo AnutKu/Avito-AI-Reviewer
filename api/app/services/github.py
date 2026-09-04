@@ -13,10 +13,13 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
+from ..config import settings
+
 
 MAX_ARCHIVE_BYTES = 12 * 1024 * 1024
 MAX_FILE_BYTES = 350 * 1024
-MAX_SNAPSHOT_CHARS = 140_000
+SECTION_SEPARATOR = "\n\n---\n\n"
+TRUNCATION_NOTE = "\n[Файл обрезан по лимиту снапшота]"
 ALLOWED_SUFFIXES = {".py", ".ipynb", ".md", ".txt", ".yaml", ".yml", ".toml", ".json"}
 IGNORED_PARTS = {".git", ".venv", "venv", "node_modules", "dist", "build", "__pycache__"}
 
@@ -76,11 +79,21 @@ def _notebook_text(path: str, raw: bytes) -> tuple[str, list[int], int]:
     return "\n".join(chunks), execution_counts, failed_cells
 
 
-def build_snapshot(archive: bytes) -> GithubSnapshot:
+def build_snapshot(archive: bytes, max_chars: int | None = None) -> GithubSnapshot:
+    """Собирает снапшот в пределах `max_chars`.
+
+    Отброшенное лимитом попадает в `parsed_facts` (`truncated`, `omitted_files`):
+    «модель не увидела файл» должно читаться из снапшота, а не выясняться перебором.
+    """
+
+    limit = settings.max_snapshot_chars if max_chars is None else max_chars
     sections: list[str] = []
+    used = 0
     execution_counts: list[int] = []
     failed_cells = 0
     included_files: list[str] = []
+    omitted_files: list[str] = []
+    truncated = False
     try:
         bundle = zipfile.ZipFile(io.BytesIO(archive))
     except zipfile.BadZipFile as exc:
@@ -96,28 +109,38 @@ def build_snapshot(archive: bytes) -> GithubSnapshot:
         relative = str(PurePosixPath(*relative_parts))
         if path.suffix.lower() not in ALLOWED_SUFFIXES:
             continue
+        if truncated:
+            omitted_files.append(relative)
+            continue
         raw = bundle.read(info)
         if path.suffix.lower() == ".ipynb":
             text, counts, errors = _notebook_text(relative, raw)
-            execution_counts.extend(counts)
-            failed_cells += errors
         else:
             try:
                 decoded = raw.decode("utf-8")
             except UnicodeDecodeError:
                 continue
-            text = f"# Файл: {relative}\n\n{decoded}"
-        if sum(len(section) for section in sections) + len(text) > MAX_SNAPSHOT_CHARS:
-            remaining = MAX_SNAPSHOT_CHARS - sum(len(section) for section in sections)
+            text, counts, errors = f"# Файл: {relative}\n\n{decoded}", [], 0
+        # used считает длину итогового content вместе с разделителями, поэтому
+        # snapshot_chars в фактах никогда не превысит snapshot_limit.
+        separator = len(SECTION_SEPARATOR) if sections else 0
+        if used + separator + len(text) > limit:
+            truncated = True
+            remaining = limit - used - separator - len(TRUNCATION_NOTE)
             if remaining > 500:
-                sections.append(text[:remaining] + "\n[Файл обрезан по лимиту снапшота]")
-            break
+                text = text[:remaining] + TRUNCATION_NOTE
+            else:
+                omitted_files.append(relative)
+                continue
         sections.append(text)
+        used += separator + len(text)
         included_files.append(relative)
+        execution_counts.extend(counts)
+        failed_cells += errors
 
     if not sections:
         raise GithubSnapshotError("В репозитории нет поддерживаемых текстовых файлов")
-    content = "\n\n---\n\n".join(sections)
+    content = SECTION_SEPARATOR.join(sections)
     lowered = content.lower()
     run_markers = len(re.findall(r"mlflow\.start_run\s*\(", lowered))
     metrics = sorted(
@@ -133,6 +156,10 @@ def build_snapshot(archive: bytes) -> GithubSnapshot:
             re.search(r"register_model|registered_model_name|create_registered_model", lowered)
         ),
         "failed_cells": failed_cells,
+        "snapshot_chars": len(content),
+        "snapshot_limit": limit,
+        "truncated": truncated,
+        "omitted_files": omitted_files,
     }
     return GithubSnapshot(
         content=content,

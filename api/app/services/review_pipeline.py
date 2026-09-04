@@ -1,7 +1,20 @@
-"""Core-side orchestration and persistence for asynchronous AI review."""
+"""Core-side orchestration and persistence for asynchronous AI review.
 
+Прогон живёт в `BackgroundTasks` того же процесса uvicorn — очереди в MVP нет.
+Из этого следуют три вещи, реализованные здесь, а не оставленные на удачу:
+
+* транзиентный отказ провайдера повторяется (`ai_review_max_attempts`);
+* запись, оставшаяся в `running` дольше `ai_review_stale_after_seconds`,
+  считается мёртвой и переводится в `failed` (`fail_stale_reviews`);
+* при старте процесса все `running` осиротели по определению — прогон умер
+  вместе с предыдущим процессом (`recover_orphaned_reviews`).
+"""
+
+import time
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -19,7 +32,22 @@ from ..models import (
     Snapshot,
     Submission,
 )
-from .ai_reviewer_client import AiReviewerClient, ProviderMetadata
+from .ai_reviewer_client import (
+    AiReviewerClient,
+    AiReviewerError,
+    AiReviewerNotConfigured,
+    ProviderMetadata,
+    ReviewResponse,
+)
+
+ORPHANED_ERROR = (
+    "Прогон прерван: процесс, выполнявший AI-ревью, был остановлен. "
+    "Запустите проверку заново."
+)
+STALE_ERROR = (
+    "Прогон не завершился за отведённое время и признан зависшим. "
+    "Запустите проверку заново."
+)
 
 
 def _record_call(db: Session, review_id: UUID, stage: str, metadata: ProviderMetadata) -> None:
@@ -45,6 +73,90 @@ def persist_call(db: Session, review_id: UUID, stage: str, metadata: ProviderMet
     _record_call(db, review_id, stage, metadata)
 
 
+def running_since(review: Review) -> datetime:
+    """Момент старта прогона. Пишется в raw_result, чтобы не заводить миграцию схемы."""
+
+    started = (review.raw_result or {}).get("started_at")
+    if isinstance(started, str):
+        try:
+            return datetime.fromisoformat(started)
+        except ValueError:
+            pass
+    return review.created_at or datetime.now(UTC)
+
+
+def is_stale(review: Review) -> bool:
+    if review.ai_status != AiStatus.RUNNING:
+        return False
+    deadline = datetime.now(UTC) - timedelta(seconds=settings.ai_review_stale_after_seconds)
+    return running_since(review) < deadline
+
+
+def _mark_failed(review: Review, message: str) -> None:
+    review.ai_status = AiStatus.FAILED
+    review.ai_error = message
+
+
+def fail_stale_reviews(db: Session) -> int:
+    """Переводит зависшие прогоны в failed. Дёргается из чтения очереди — планировщика нет."""
+
+    stale = [
+        review
+        for review in db.scalars(select(Review).where(Review.ai_status == AiStatus.RUNNING))
+        if is_stale(review)
+    ]
+    for review in stale:
+        _mark_failed(review, STALE_ERROR)
+    if stale:
+        db.commit()
+    return len(stale)
+
+
+def recover_orphaned_reviews() -> int:
+    """Вызывается на старте приложения.
+
+    BackgroundTasks не переживают перезапуск процесса, поэтому любой `running`
+    на старте — осиротевшая запись, а не выполняющийся прогон.
+
+    Верно ровно до тех пор, пока api поднят одним процессом (текущий CMD без
+    --workers). Появятся воркеры — старт одного будет ронять прогоны соседей,
+    и это место должно уехать во внешнюю очередь.
+    """
+
+    with SessionLocal() as db:
+        orphaned = list(db.scalars(select(Review).where(Review.ai_status == AiStatus.RUNNING)))
+        for review in orphaned:
+            _mark_failed(review, ORPHANED_ERROR)
+        if orphaned:
+            db.commit()
+        return len(orphaned)
+
+
+def _review_with_retries(
+    *,
+    assignment: Assignment,
+    rubric: RubricVersion,
+    snapshot: Snapshot,
+) -> ReviewResponse:
+    """Повтор транзиентного отказа. Отсутствие ключа детерминировано — не повторяем."""
+
+    attempts = max(1, settings.ai_review_max_attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            return AiReviewerClient().review(
+                assignment=assignment,
+                rubric=rubric,
+                snapshot=snapshot,
+            )
+        except AiReviewerNotConfigured:
+            raise
+        except AiReviewerError:
+            if attempt == attempts:
+                raise
+            time.sleep(settings.ai_review_retry_delay_seconds * attempt)
+    raise AssertionError("недостижимо: цикл повторов всегда возвращает или бросает")
+
+
 def run_review(review_id: UUID) -> None:
     """Background task entry point. Provider failures never create fallback results."""
 
@@ -55,7 +167,7 @@ def run_review(review_id: UUID) -> None:
         review.ai_status = AiStatus.RUNNING
         review.ai_error = None
         review.model = settings.ai_reviewer_model
-        review.raw_result = {}
+        review.raw_result = {"started_at": datetime.now(UTC).isoformat()}
         review.draft_feedback = ""
         for item in list(review.items):
             db.delete(item)
@@ -68,7 +180,7 @@ def run_review(review_id: UUID) -> None:
             snapshot = db.query(Snapshot).filter(Snapshot.submission_id == submission.id).one()
             assignment = db.get(Assignment, submission.assignment_id)
             rubric = db.get(RubricVersion, review.rubric_version_id)
-            response = AiReviewerClient().review(
+            response = _review_with_retries(
                 assignment=assignment,
                 rubric=rubric,
                 snapshot=snapshot,
@@ -120,6 +232,5 @@ def run_review(review_id: UUID) -> None:
             db.rollback()
             review = db.get(Review, review_id)
             if review:
-                review.ai_status = AiStatus.FAILED
-                review.ai_error = str(exc)[:2000]
+                _mark_failed(review, str(exc)[:2000])
                 db.commit()

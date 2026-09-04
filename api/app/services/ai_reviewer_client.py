@@ -12,11 +12,19 @@ from ..models import Assignment, RubricVersion, Snapshot
 
 
 class AiReviewerError(RuntimeError):
-    pass
+    """Провайдер ответил, но ответ непригоден. Повтор имеет смысл: ответ не детерминирован."""
 
 
 class AiReviewerUnavailable(AiReviewerError):
-    pass
+    """Сервис недоступен: сеть, таймаут, не поднят. Повтор имеет смысл."""
+
+
+class AiReviewerNotConfigured(AiReviewerUnavailable):
+    """Нет ZAI_API_KEY. Детерминированный отказ — повторять нечего.
+
+    Наследуется от AiReviewerUnavailable, чтобы вызовы, отдающие наружу 503,
+    продолжали работать без изменений.
+    """
 
 
 class ContractModel(BaseModel):
@@ -93,7 +101,7 @@ class AiReviewerClient:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 detail = f"HTTP {exc.code}"
             if exc.code == 503:
-                raise AiReviewerUnavailable(detail) from exc
+                raise AiReviewerNotConfigured(detail) from exc
             raise AiReviewerError(detail) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise AiReviewerUnavailable("Сервис ai-reviewer недоступен") from exc

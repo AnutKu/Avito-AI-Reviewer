@@ -92,7 +92,15 @@ class ZaiReviewer:
             "max_score": request.rubric.max_score,
             "deterministic_facts": request.snapshot.parsed_facts,
         }
-        solution = request.snapshot.content[: settings.max_snapshot_chars]
+        # Тот же MAX_SNAPSHOT_CHARS, что и у core api при сборке снапшота, — здесь это
+        # страховка, а не второй потолок. Если она всё-таки сработала, конфиги разъехались,
+        # и об этом должно быть видно в промпте, а не только по пропавшему куску решения.
+        solution = request.snapshot.content
+        if len(solution) > settings.max_snapshot_chars:
+            solution = (
+                solution[: settings.max_snapshot_chars]
+                + "\n[Снапшот дополнительно обрезан сервисом ai-reviewer по MAX_SNAPSHOT_CHARS]"
+            )
         user_prompt = (
             f"Контекст проверки:\n{json.dumps(context, ensure_ascii=False)}\n\n"
             f"<student_solution>\n{solution}\n</student_solution>"
