@@ -1,5 +1,4 @@
 import re
-from collections import Counter
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -16,7 +15,6 @@ from ..models import (
     Enrollment,
     Review,
     ReviewAssignment,
-    ReviewItem,
     Role,
     RubricVersion,
     Submission,
@@ -25,6 +23,7 @@ from ..models import (
 )
 from ..security import require
 from ..serializers import assignment_data, iso, submission_data
+from ..services.analytics import course_report, performance_report
 from ..services.assignment import (
     assign_submission,
     auto_assign_enabled,
@@ -115,40 +114,6 @@ class PublishPayload(BaseModel):
 def feature(enabled: bool) -> None:
     if not enabled:
         raise HTTPException(404, "Раздел выключен фиче-флагом")
-
-
-@router.get("/dashboard")
-def dashboard(user: User = Depends(methodist_guard), db: Session = Depends(get_db)) -> dict:
-    del user
-    submissions = list(db.scalars(select(Submission)))
-    counts = Counter(item.status for item in submissions)
-    loads = reviewer_loads(db)
-    completed = [item for item in submissions if item.status == SubmissionStatus.COMPLETED]
-    return {
-        "demo_data": True,
-        "metrics": {
-            "total": 40,
-            "completed": 27,
-            "overdue": 3,
-            "average_hours": 18.4,
-        },
-        "funnel": [
-            {"status": status, "count": counts.get(status, 0)}
-            for status in SubmissionStatus
-        ],
-        "reviewers": [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "active": row["load"],
-                "capacity": row["capacity"],
-                "available": row["available"],
-            }
-            for row in loads
-        ],
-        "live_records": len(submissions),
-        "live_completed": len(completed),
-    }
 
 
 def _proposal_row(proposal: dict) -> dict:
@@ -582,32 +547,30 @@ def publish_rubric(
 
 
 @router.get("/analytics")
-def analytics(user: User = Depends(methodist_guard), db: Session = Depends(get_db)) -> dict:
+def analytics(
+    course_id: UUID | None = None,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Объединённый экран «Дашборд курса»: обзор потока + качество проверки.
+
+    Всё считается по живым записям. Блок `quality` приезжает только когда
+    включён фиче-флаг аналитики — вкладка исчезает, экран остаётся целым."""
+
     del user
-    feature(settings.feature_analytics)
-    live = db.execute(
-        select(ReviewItem.criterion_title, ReviewItem.reviewer_action, func.count())
-        .group_by(ReviewItem.criterion_title, ReviewItem.reviewer_action)
-    ).all()
-    return {
-        "demo_data": True,
-        "criteria": [
-            {"title": "Регистрация лучшей модели", "correction_rate": 38, "reviews": 40},
-            {"title": "Выводы по экспериментам", "correction_rate": 31, "reviews": 40},
-            {"title": "Воспроизводимость", "correction_rate": 18, "reviews": 40},
-            {"title": "Трекинг экспериментов", "correction_rate": 7, "reviews": 40},
-        ],
-        "weekly": [
-            {"week": "11 авг", "ai_agreement": 71, "review_time": 27},
-            {"week": "18 авг", "ai_agreement": 76, "review_time": 23},
-            {"week": "25 авг", "ai_agreement": 82, "review_time": 18},
-            {"week": "1 сен", "ai_agreement": 84, "review_time": 16},
-        ],
-        "live_actions": [
-            {"criterion": title, "action": action, "count": count}
-            for title, action, count in live
-        ],
-    }
+    return course_report(db, course_id, with_quality=settings.feature_analytics)
+
+
+@router.get("/performance")
+def performance(
+    course_id: UUID | None = None,
+    user: User = Depends(methodist_guard),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Успеваемость: матрица «студент × опубликованное задание»."""
+
+    del user
+    return performance_report(db, course_id)
 
 
 @router.get("/course")

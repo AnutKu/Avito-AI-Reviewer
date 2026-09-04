@@ -4,15 +4,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
+    AiStatus,
     Assignment,
     BlitzSession,
     BlitzStatus,
+    Confidence,
     Course,
     Enrollment,
     Notification,
     Review,
     ReviewAssignment,
     ReviewerAction,
+    ReviewItem,
     Role,
     RubricVersion,
     Snapshot,
@@ -20,8 +23,348 @@ from .models import (
     Submission,
     SubmissionStatus,
     User,
+    Verdict,
 )
 from .services.mock_review import demo_blitz_questions, fill_demo_review
+
+
+# --------------------------------------------------------------------------- #
+# История сданных ДЗ
+#
+# Дашборд и успеваемость считаются по живым записям, поэтому одного текущего
+# задания им мало: без закрытых работ нет ни динамики по неделям, ни статистики
+# правок, ни среднего балла. Ниже — архив прошлых ДЗ курса: он создаётся один
+# раз и только для демо-курса, продовый сценарий им не затрагивается.
+# --------------------------------------------------------------------------- #
+
+# Базовая «сила» студента (порядок — по алфавиту полного имени, как в кабинете).
+BASE_QUALITY = (0.92, 0.74, 0.55, 0.83, 0.68, 0.88)
+
+HISTORY_ASSIGNMENTS = (
+    {
+        "title": "Разведочный анализ данных",
+        "statement": (
+            "Изучите датасет: проверьте пропуски и выбросы, постройте распределения "
+            "ключевых признаков и их взаимосвязи, сформулируйте гипотезы о том, что "
+            "влияет на целевую переменную."
+        ),
+        "weeks_ago": 4,
+        "effort_weight": 1.0,
+        "pass_score": 6.0,
+        "criteria": (
+            ("data_quality", "Проверка качества данных", 3.0),
+            ("visual_analysis", "Визуальный анализ признаков", 3.0),
+            ("hypotheses", "Гипотезы и выводы", 2.0),
+            ("notebook_style", "Оформление ноутбука", 2.0),
+        ),
+        "problem_index": 2,
+        "drift": -0.05,
+        "assign_delay_hours": 20,
+        "review_hours": 34.0,
+        "skipped": (),
+        "overdue": (4,),
+    },
+    {
+        "title": "Базовая модель и метрики качества",
+        "statement": (
+            "Обучите базовую модель, обоснуйте выбор метрик под задачу, опишите схему "
+            "валидации и разберите типичные ошибки модели на примерах."
+        ),
+        "weeks_ago": 3,
+        "effort_weight": 1.5,
+        "pass_score": 6.0,
+        "criteria": (
+            ("baseline", "Обучение базовой модели", 3.0),
+            ("metrics", "Выбор и обоснование метрик", 3.0),
+            ("validation", "Схема валидации", 2.0),
+            ("error_analysis", "Анализ ошибок", 2.0),
+        ),
+        "problem_index": 3,
+        "drift": 0.0,
+        "assign_delay_hours": 12,
+        "review_hours": 26.0,
+        "skipped": (2,),
+        "overdue": (5,),
+    },
+    {
+        "title": "Отбор и конструирование признаков",
+        "statement": (
+            "Постройте новые признаки на основе доменных гипотез, оцените их вклад в "
+            "качество модели и обоснуйте итоговый набор."
+        ),
+        "weeks_ago": 2,
+        "effort_weight": 1.0,
+        "pass_score": 6.0,
+        "criteria": (
+            ("feature_ideas", "Гипотезы о признаках", 2.0),
+            ("feature_code", "Реализация преобразований", 3.0),
+            ("feature_impact", "Оценка вклада признаков", 3.0),
+            ("feature_selection", "Обоснование итогового набора", 2.0),
+        ),
+        "problem_index": 2,
+        "drift": 0.02,
+        "assign_delay_hours": 9,
+        "review_hours": 20.0,
+        "skipped": (4,),
+        "overdue": (0,),
+    },
+    {
+        "title": "Подбор гиперпараметров",
+        "statement": (
+            "Определите пространство поиска, подберите гиперпараметры выбранным методом, "
+            "покажите контроль переобучения и зафиксируйте итоговую конфигурацию."
+        ),
+        "weeks_ago": 1,
+        "effort_weight": 1.0,
+        "pass_score": 6.0,
+        "criteria": (
+            ("search_space", "Пространство поиска", 2.0),
+            ("search_method", "Метод подбора", 3.0),
+            ("overfit_control", "Контроль переобучения", 3.0),
+            ("conclusions", "Выводы и итоговая конфигурация", 2.0),
+        ),
+        "problem_index": 2,
+        "drift": 0.05,
+        "assign_delay_hours": 6,
+        "review_hours": 14.0,
+        "skipped": (2,),
+        "overdue": (1,),
+    },
+)
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def _verdict(score: float, max_score: float) -> str:
+    if score >= max_score * 0.85:
+        return Verdict.PASSED
+    if score <= max_score * 0.35:
+        return Verdict.FAILED
+    return Verdict.PARTIAL
+
+
+def _decision(spec: dict, student_index: int, position: int, score: float, max_score: float):
+    """Решение ревьюера по критерию: (действие, итоговый балл).
+
+    Правки не размазаны равномерно — иначе «критерии с частыми правками»
+    показывали бы одинаковый шум по всем строкам. Один критерий задания
+    проблемный, соседний правится изредка, остальные принимаются как есть."""
+
+    if position == spec["problem_index"]:
+        if student_index % 4 == 3:
+            return ReviewerAction.REJECTED, None
+        if student_index % 5 == 1:
+            return ReviewerAction.ACCEPTED, score
+        step = 0.5 if student_index % 2 == 0 else -0.5
+        return ReviewerAction.CHANGED, _clamp(score + step, 0.0, max_score)
+    if position == (spec["problem_index"] + 1) % len(spec["criteria"]) and student_index % 3 == 0:
+        return ReviewerAction.CHANGED, _clamp(score - 0.5, 0.0, max_score)
+    return ReviewerAction.ACCEPTED, score
+
+
+def _seed_history_assignment(
+    db: Session,
+    spec: dict,
+    *,
+    course: Course,
+    methodist: User | None,
+    reviewers: list[User],
+    students: list[User],
+    now: datetime,
+) -> None:
+    deadline = now - timedelta(weeks=spec["weeks_ago"])
+    opened = deadline - timedelta(days=10)
+    assignment = Assignment(
+        course_id=course.id,
+        title=spec["title"],
+        statement=spec["statement"],
+        deadline_at=deadline,
+        effort_weight=spec["effort_weight"],
+        submission_channel="github",
+        published_at=opened,
+        created_at=opened,
+    )
+    db.add(assignment)
+    db.flush()
+
+    criteria = [
+        {"key": key, "title": title, "max_score": max_score}
+        for key, title, max_score in spec["criteria"]
+    ]
+    rubric = RubricVersion(
+        assignment_id=assignment.id,
+        version=1,
+        criteria=criteria,
+        max_score=sum(item["max_score"] for item in criteria),
+        pass_score=spec["pass_score"],
+        author_id=methodist.id if methodist else None,
+        published_at=opened,
+        note="Архивная версия задания",
+    )
+    db.add(rubric)
+    db.flush()
+    assignment.current_rubric_version_id = rubric.id
+
+    for index, student in enumerate(students):
+        if index in spec["skipped"]:
+            continue
+        overdue = index in spec["overdue"]
+        submitted_at = (
+            deadline + timedelta(hours=7)
+            if overdue
+            else deadline - timedelta(hours=8 + index * 5)
+        )
+        submission = Submission(
+            assignment_id=assignment.id,
+            student_id=student.id,
+            source_url=f"https://github.com/demo-student/{spec['criteria'][0][0]}-{index + 1}",
+            submitted_at=submitted_at,
+            status=SubmissionStatus.COMPLETED,
+            is_overdue=overdue,
+        )
+        db.add(submission)
+        db.flush()
+        db.add(
+            Snapshot(
+                submission_id=submission.id,
+                content=f"# {spec['title']}\n\nАрхивная работа демо-курса.\n",
+                content_hash=f"demo-{spec['criteria'][0][0]}-{index + 1:02d}",
+                fetched_at=submitted_at,
+                parsed_facts={"archived": True, "seed": 42},
+            )
+        )
+
+        reviewer = reviewers[(index + spec["weeks_ago"]) % len(reviewers)]
+        approved_at = submitted_at + timedelta(hours=spec["assign_delay_hours"])
+        completed_at = approved_at + timedelta(hours=spec["review_hours"] + index * 1.5)
+        db.add(
+            ReviewAssignment(
+                submission_id=submission.id,
+                reviewer_id=reviewer.id,
+                explanation="Специализация совпадает · минимальная загрузка на момент назначения",
+                approved_by=methodist.id if methodist else None,
+                approved_at=approved_at,
+                created_at=submitted_at + timedelta(minutes=5),
+            )
+        )
+        review = Review(
+            submission_id=submission.id,
+            rubric_version_id=rubric.id,
+            model="demo-fixture/v1",
+            ai_status=AiStatus.READY,
+            raw_result={
+                "summary": f"Архивное ревью по заданию «{spec['title']}».",
+                "pipeline": ["extract", "grade", "signal", "feedback"],
+                "demo_data": True,
+            },
+            draft_feedback="Черновик обратной связи из архива демо-курса.",
+            final_feedback="Обратная связь опубликована ревьюером.",
+            completed_by=reviewer.id,
+            completed_at=completed_at,
+            created_at=submitted_at + timedelta(minutes=2),
+        )
+        db.add(review)
+        db.flush()
+
+        total = 0.0
+        for position, criterion in enumerate(criteria):
+            quality = _clamp(
+                BASE_QUALITY[index % len(BASE_QUALITY)]
+                + spec["drift"]
+                + ((index + position) % 3 - 1) * 0.06
+            )
+            max_score = criterion["max_score"]
+            ai_score = round(max_score * quality * 2) / 2
+            action, final_score = _decision(spec, index, position, ai_score, max_score)
+            total += final_score or 0.0
+            db.add(
+                ReviewItem(
+                    review_id=review.id,
+                    position=position,
+                    criterion_key=criterion["key"],
+                    criterion_title=criterion["title"],
+                    max_score=max_score,
+                    ai_score=ai_score,
+                    verdict=_verdict(ai_score, max_score),
+                    confidence=Confidence.MEDIUM,
+                    evidence=[{"quote": "Фрагмент работы", "anchor": f"Ячейка {position + 3}"}],
+                    recommendation="Замечание из архивного ревью.",
+                    reviewer_action=action,
+                    final_score=final_score,
+                    reviewer_comment=(
+                        "" if action == ReviewerAction.ACCEPTED else "Скорректировано ревьюером"
+                    ),
+                )
+            )
+        review.final_score = round(total, 1)
+
+        db.add_all(
+            [
+                StatusHistory(
+                    submission_id=submission.id,
+                    from_status=None,
+                    to_status=SubmissionStatus.SUBMITTED,
+                    actor_id=student.id,
+                    comment="Работа сдана",
+                    created_at=submitted_at,
+                ),
+                StatusHistory(
+                    submission_id=submission.id,
+                    from_status=SubmissionStatus.IN_REVIEW,
+                    to_status=SubmissionStatus.COMPLETED,
+                    actor_id=reviewer.id,
+                    comment="Проверка завершена",
+                    created_at=completed_at,
+                ),
+            ]
+        )
+
+
+def seed_history(db: Session) -> None:
+    """Досоздать архив прошлых ДЗ. Идемпотентно: задание с таким названием — один раз."""
+
+    course = db.scalar(select(Course).order_by(Course.created_at))
+    if not course:
+        return
+    methodist = db.scalar(select(User).where(User.role == Role.METHODIST))
+    reviewers = list(
+        db.scalars(select(User).where(User.role == Role.REVIEWER).order_by(User.full_name))
+    )
+    students = list(
+        db.scalars(
+            select(User)
+            .join(Enrollment, Enrollment.user_id == User.id)
+            .where(Enrollment.course_id == course.id, User.role == Role.STUDENT)
+            .order_by(User.full_name)
+        )
+    )
+    if not reviewers or not students:
+        return
+
+    now = datetime.now(UTC)
+    created = False
+    for spec in HISTORY_ASSIGNMENTS:
+        exists = db.scalar(
+            select(Assignment.id).where(
+                Assignment.course_id == course.id, Assignment.title == spec["title"]
+            )
+        )
+        if exists:
+            continue
+        _seed_history_assignment(
+            db,
+            spec,
+            course=course,
+            methodist=methodist,
+            reviewers=reviewers,
+            students=students,
+            now=now,
+        )
+        created = True
+    if created:
+        db.commit()
 
 
 def seed_demo(db: Session) -> None:
@@ -36,6 +379,8 @@ def seed_demo(db: Session) -> None:
     if legacy_reviews:
         db.commit()
     if db.scalar(select(User.id).limit(1)):
+        # Кабинет уже засеян: досоздаём только то, чего в нём ещё нет.
+        seed_history(db)
         return
 
     now = datetime.now(UTC)
@@ -240,3 +585,4 @@ def seed_demo(db: Session) -> None:
         ]
     )
     db.commit()
+    seed_history(db)
