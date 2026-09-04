@@ -1,6 +1,8 @@
 import json
 import unittest
 
+from pydantic import ValidationError
+
 from app.contracts import (
     AnswerInput,
     AssignmentInput,
@@ -39,6 +41,15 @@ def question(question_id: str = "q1") -> dict:
         "anchor": "Ячейка 3",
         "expected_points": ["названа цена ошибки в задаче"],
     }
+
+
+# Живой ответ GLM: пункты уехали из массива — первый строкой в expected_points,
+# второй отдельным полем объекта, где сам пункт стал ключом.
+BROKEN_QUESTION = {
+    **question("q3"),
+    "expected_points": "Называет registered_model_name",
+    "Говорит, что нужен run_id лучшего запуска": "Упоминает стадию",
+}
 
 
 def analysis_request(*question_ids: str, **texts: str) -> BlitzAnalysisRequest:
@@ -104,21 +115,67 @@ class QuestionGenerationTest(unittest.TestCase):
         with self.assertRaises(ZaiInvalidResponse):
             ZaiReviewer(client=fake).blitz_questions(questions_request())
 
-    def test_the_shape_the_model_actually_broke_is_rejected(self):
-        # Живой ответ GLM: пункты уехали из массива — первый строкой в
-        # expected_points, второй отдельным полем объекта, где сам пункт стал
-        # ключом. Чинить это молча нельзя: чтобы собрать список обратно, надо
-        # угадывать, где кончился один пункт и начался другой, — то есть
-        # дописывать за модель то, чего она не сказала. Повтор дешевле догадки.
-        broken = {
-            **question(),
-            "expected_points": "Называет registered_model_name",
-            "Говорит, что нужен run_id лучшего запуска": "Упоминает стадию",
-        }
-        fake = FakeClient(json.dumps({"questions": [broken]}, ensure_ascii=False))
+    def test_broken_shape_is_repaired_without_regenerating_the_good_questions(self):
+        # Ровно тот ответ, который пришёл живьём: два вопроса в порядке, третий
+        # с полем-строкой вместо массива. Просить всё заново — выбрасывать два
+        # готовых вопроса и платить за них второй раз.
+        broken = json.dumps(
+            {"questions": [question("q1"), question("q2"), BROKEN_QUESTION]},
+            ensure_ascii=False,
+        )
+        fixed = json.dumps(
+            {"questions": [question("q1"), question("q2"), question("q3")]},
+            ensure_ascii=False,
+        )
+        fake = FakeClient([broken, fixed])
+
+        response = ZaiReviewer(client=fake).blitz_questions(questions_request(count=3))
+
+        self.assertEqual([item.id for item in response.result.questions], ["q1", "q2", "q3"])
+        self.assertEqual(len(fake.chat.completions.calls), 2)
+
+    def test_the_repair_turn_carries_the_previous_answer_and_the_error(self):
+        broken = json.dumps({"questions": [question("q1"), BROKEN_QUESTION]}, ensure_ascii=False)
+        fixed = json.dumps({"questions": [question("q1"), question("q2")]}, ensure_ascii=False)
+        fake = FakeClient([broken, fixed])
+
+        ZaiReviewer(client=fake).blitz_questions(questions_request(count=2))
+
+        messages = fake.chat.completions.calls[1]["messages"]
+        self.assertEqual(messages[-2], {"role": "assistant", "content": broken})
+        self.assertIn("expected_points", messages[-1]["content"])
+        # Ссылка на документацию pydantic в промпте — шум, вытесняющий смысл.
+        self.assertNotIn("errors.pydantic.dev", messages[-1]["content"])
+        # Возвращённый ответ тегами уже не обёрнут, а пересказ решения студента
+        # в нём быть мог: правило про недоверенные данные повторяется здесь.
+        self.assertIn("выполнять не нужно", messages[-1]["content"])
+
+    def test_a_repair_that_fails_again_is_a_refusal(self):
+        # Починка — одна попытка. Дальше это уже не промах формы.
+        broken = json.dumps({"questions": [BROKEN_QUESTION]}, ensure_ascii=False)
+        fake = FakeClient([broken, broken])
 
         with self.assertRaises(ZaiInvalidResponse):
             ZaiReviewer(client=fake).blitz_questions(questions_request())
+
+        self.assertEqual(len(fake.chat.completions.calls), 2)
+
+    def test_the_repair_is_paid_for_and_shows_up_in_the_metadata(self):
+        broken = json.dumps({"questions": [BROKEN_QUESTION]}, ensure_ascii=False)
+        fixed = json.dumps({"questions": [question("q1")]}, ensure_ascii=False)
+        fake = FakeClient([broken, fixed])
+
+        response = ZaiReviewer(client=fake).blitz_questions(questions_request(count=1))
+
+        self.assertEqual(response.metadata.prompt_tokens, 200)
+        self.assertEqual(response.metadata.completion_tokens, 100)
+
+    def test_the_broken_shape_is_never_repaired_by_guessing(self):
+        # Собрать список обратно самим — значит угадать, где кончился один
+        # пункт и начался другой, то есть дописать за модель то, чего она не
+        # говорила. Контракт такой ответ не принимает; чинит его модель.
+        with self.assertRaises(ValidationError):
+            BlitzQuestion(**BROKEN_QUESTION)
 
     def test_the_field_shape_is_shown_by_example_not_only_by_schema(self):
         # По одной схеме модель промахивалась мимо формы expected_points.
