@@ -50,6 +50,26 @@ class FakeEngine:
     def __init__(self, *args, **kwargs):
         del args, kwargs
 
+    task_state = "ready"
+
+    def get_task(self, task_id):
+        del task_id
+        return {
+            "id": "engine-task-1", "gen_status": self.task_state, "gen_error": "модель не ответила",
+            "total_points": 10,
+            "data": {
+                "title": "Кейс по оттоку", "statement_md": "Посчитайте отток.",
+                "context_md": "Вы аналитик.", "deliverables": ["отчёт"],
+                "learning_objectives": ["считать отток"], "reference_solution_md": "эталон",
+                "criteria": [{"key": "metrics", "title": "Метрики", "max_points": 6}],
+            },
+        }
+
+    def generate_task(self, idea):
+        del idea
+        FakeEngine.calls.append("generate")
+        return {"id": "engine-task-1", "gen_status": "generating"}
+
     def import_task(self, payload):
         FakeEngine.calls.append("import")
         FakeEngine.last_payload = payload
@@ -75,6 +95,7 @@ def engine(monkeypatch):
     FakeEngine.calls = []
     FakeEngine.result = RESULT
     FakeEngine.run_status = "succeeded"
+    FakeEngine.task_state = "ready"
     monkeypatch.setattr(task_ai, "TaskCreaterClient", FakeEngine)
     monkeypatch.setattr(task_ai.settings, "ai_task_run_poll_seconds", 0)
     return FakeEngine
@@ -324,3 +345,42 @@ def test_applying_does_not_start_another_run(methodist, draft, engine):
     engine.calls = []
     methodist.post(f"/api/methodist/ai-recommendations/{row['id']}/apply", json={})
     assert engine.calls == [], "повторный прогон — только явным действием человека"
+
+
+# --- черновик из идеи ------------------------------------------------------
+
+
+def test_draft_from_idea_answers_immediately(methodist, engine):
+    """Сборка идёт минуты — ручка обязана вернуть номер задачи, а не ждать её."""
+
+    response = methodist.post(
+        "/api/methodist/assignments/draft-from-idea",
+        json={"idea": "Кейс про падение ROMI за год", "track": "Аналитика данных"},
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["job_id"] == "engine-task-1"
+    assert response.json()["status"] == "generating"
+
+
+def test_draft_status_reports_while_generating(methodist, engine):
+    engine.task_state = "generating"
+    body = methodist.get("/api/methodist/assignments/draft-from-idea/engine-task-1").json()
+    assert body == {"status": "generating"}
+
+
+def test_ready_draft_comes_back_as_a_preview(methodist, engine):
+    body = methodist.get(
+        "/api/methodist/assignments/draft-from-idea/engine-task-1?track=Аналитика&total_points=10"
+    ).json()
+    assert body["status"] == "ready"
+    draft = body["draft"]
+    assert draft["title"] == "Кейс по оттоку"
+    assert draft["criteria"][0]["max_score"] == 6
+    assert draft["authoring"]["topic"] == "Аналитика"
+    assert len(methodist.get("/api/methodist/assignments").json()) == 5, "предпросмотр ничего не создаёт"
+
+
+def test_a_failed_generation_is_reported_not_swallowed(methodist, engine):
+    engine.task_state = "generation_failed"
+    body = methodist.get("/api/methodist/assignments/draft-from-idea/engine-task-1").json()
+    assert body["status"] == "failed" and body["error"]

@@ -134,6 +134,31 @@ def engine_payload(*, title: str, statement: str, authoring: dict, criteria: lis
     }
 
 
+def draft_from_engine_task(task: dict, *, track: str = "", total_points: float = 10) -> dict:
+    """Сгенерированное движком задание в форме черновика кабинета.
+
+    Это предпросмотр, а не запись: поля едут на экран, и что из них оставить,
+    решает методист.
+    """
+
+    data = task.get("data") or {}
+    deliverables = list(data.get("deliverables") or [])
+    return {
+        "title": data.get("title", ""),
+        "statement": data.get("statement_md", ""),
+        "authoring": {
+            "topic": track or data.get("track") or "",
+            "context": data.get("context_md", ""),
+            "expected_result": "\n".join(f"• {item}" for item in deliverables),
+            "learning_objectives": data.get("learning_objectives") or [],
+            "reference_solution": data.get("reference_solution_md", ""),
+            "reviewer_notes": data.get("reviewer_notes", ""),
+        },
+        "criteria": [from_engine_criterion(item) for item in data.get("criteria") or []],
+        "pass_score": round(float(task.get("total_points") or total_points) * 0.6, 1),
+    }
+
+
 # --------------------------------------------------------------------------- #
 #  Результат движка → рекомендации
 # --------------------------------------------------------------------------- #

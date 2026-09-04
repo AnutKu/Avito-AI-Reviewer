@@ -971,19 +971,21 @@ def ai_fill(payload: AiFillPayload, user: User = Depends(methodist_guard)) -> di
     return {"field": payload.field, "proposed": out.get("proposed", ""), "note": out.get("note", "")}
 
 
-@router.post("/assignments/draft-from-idea")
-def draft_from_idea(
-    payload: DraftFromIdeaPayload,
-    user: User = Depends(methodist_guard),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Черновик задания из короткой идеи — предпросмотр, а не запись.
+@router.post("/assignments/draft-from-idea", status_code=202)
+def draft_from_idea(payload: DraftFromIdeaPayload, user: User = Depends(methodist_guard)) -> dict:
+    """Ставит сборку черновика в очередь и сразу отдаёт номер задачи.
 
-    Ничего не создаёт в кабинете: методист смотрит, правит и сохраняет сам.
-    Иначе кнопка «Сформировать» плодила бы мусорные задания на каждый эксперимент.
+    Синхронного ответа здесь быть не может: задание с критериями и эталоном
+    собирается одну-две минуты, и запрос успевал упереться в таймаут прокси
+    (кабинет показывал 504 вместо результата). Готовность спрашивают отдельной
+    ручкой — страницу при этом можно закрыть, сборка идёт на сервере.
+
+    В кабинете при этом ничего не создаётся: результат — предпросмотр, который
+    методист правит и сохраняет сам. Иначе кнопка «Сформировать» плодила бы
+    мусорные задания на каждый эксперимент.
     """
 
-    del user, db
+    del user
     feature(settings.feature_rubric_builder)
     out = _engine_call(
         task_ai.client().generate_task,
@@ -996,23 +998,27 @@ def draft_from_idea(
             "language": "ru",
         },
     )
-    data = out.get("data") or {}
-    deliverables = data.get("deliverables") or []
-    return {
-        "title": data.get("title", ""),
-        "statement": data.get("statement_md", ""),
-        "authoring": {
-            "topic": payload.track,
-            "context": data.get("context_md", ""),
-            "deliverables": deliverables,
-            "expected_result": "\n".join(f"• {item}" for item in deliverables),
-            "learning_objectives": data.get("learning_objectives") or [],
-            "reference_solution": data.get("reference_solution_md", ""),
-            "reviewer_notes": data.get("reviewer_notes", ""),
-        },
-        "criteria": [task_ai.from_engine_criterion(item) for item in data.get("criteria") or []],
-        "pass_score": round(float(out.get("total_points") or payload.total_points) * 0.6, 1),
-    }
+    return {"job_id": out["id"], "status": "generating", "track": payload.track}
+
+
+@router.get("/assignments/draft-from-idea/{job_id}")
+def draft_from_idea_status(
+    job_id: str,
+    track: str = "",
+    total_points: float = 10,
+    user: User = Depends(methodist_guard),
+) -> dict:
+    """Готовность черновика. `ready` — в ответе лежит предпросмотр."""
+
+    del user
+    feature(settings.feature_rubric_builder)
+    out = _engine_call(task_ai.client().get_task, job_id)
+    state = out.get("gen_status")
+    if state == "generating":
+        return {"status": "generating"}
+    if state == "generation_failed":
+        return {"status": "failed", "error": out.get("gen_error") or "Сборка черновика не удалась"}
+    return {"status": "ready", "draft": task_ai.draft_from_engine_task(out, track=track, total_points=total_points)}
 
 
 @router.post("/assignments/{assignment_id}/ai-runs", status_code=202)

@@ -291,10 +291,23 @@ function acceptPreview() {
   preview.value = null
 }
 
+// Сборка черновика идёт на сервере одну-две минуты, поэтому здесь опрос, а не
+// один длинный запрос: иначе любой прокси по дороге рвёт соединение по таймауту.
+async function waitForDraft(jobId) {
+  for (let i = 0; i < 90; i++) {
+    await new Promise(r => setTimeout(r, 2000))
+    const state = await api(`/methodist/assignments/draft-from-idea/${jobId}?track=${encodeURIComponent(idea.value.track)}&total_points=${idea.value.total_points}`)
+    if (state.status === 'ready') return state.draft
+    if (state.status === 'failed') throw new Error(state.error)
+  }
+  throw new Error('Черновик собирается дольше обычного. Попробуйте ещё раз.')
+}
+
 async function generateDraft() {
   generating.value = true; error.value = ''
   try {
-    const out = await api('/methodist/assignments/draft-from-idea', { method: 'POST', body: JSON.stringify(idea.value) })
+    const job = await api('/methodist/assignments/draft-from-idea', { method: 'POST', body: JSON.stringify(idea.value) })
+    const out = await waitForDraft(job.job_id)
     // Ничего не перезаписываем молча: заполняем только пустые блоки, всё
     // остальное показываем как предложение и оставляем решение человеку.
     const d = draft.value
@@ -431,6 +444,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             </div>
             <label>Доп. требования<input v-model="idea.constraints" /></label>
             <button class="primary" :disabled="generating || idea.idea.trim().length < 10" @click="generateDraft">{{ generating ? 'Формирую…' : 'Сформировать черновик' }}</button>
+            <p v-if="generating" class="tb-side-note"><span class="tb-spinner" /> Сборка идёт на сервере, обычно 1–2 минуты. Заполнятся только пустые блоки.</p>
           </template>
         </article>
 
@@ -705,6 +719,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-dirty { color: #9a6810; font-size: 10px; }
 .tb-wide { width: 100%; }
 .tb-side-note { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 10px; }
+.tb-side-note .tb-spinner { display: inline-block; vertical-align: -3px; width: 12px; height: 12px; margin-right: 6px; }
 .tb-total { color: var(--muted); font-size: 11px; } .tb-total.bad { color: #9a6810; }
 .tb-warn { color: #9a6810; background: #fff8ec; border-radius: 8px; padding: 8px 10px; font-size: 11px; margin: 8px 0; }
 .tb-crit { border-bottom: 1px solid #f1f1f4; padding-bottom: 6px; }

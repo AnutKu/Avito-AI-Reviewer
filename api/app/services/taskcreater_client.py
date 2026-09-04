@@ -66,14 +66,17 @@ class TaskCreaterClient:
 
     # -- черновик из идеи -------------------------------------------------
     def generate_task(self, idea: dict) -> dict:
-        """Синхронная генерация: ответ нужен целиком, чтобы показать предпросмотр."""
+        """Ставит генерацию в очередь движка и сразу возвращает заготовку с id.
 
-        return self._request(
-            "POST",
-            "/tasks/generate",
-            {"idea": idea},
-            timeout=settings.ai_task_run_timeout_seconds,
-        )
+        Синхронно ждать нельзя: сборка задания с критериями и эталоном идёт
+        одну-две минуты, а держать всё это время открытым HTTP-запрос — значит
+        упереться в таймаут любого прокси между браузером и сервисом.
+        """
+
+        return self._request("POST", "/tasks/generate", {"background": True, "idea": idea})
+
+    def get_task(self, task_id: str) -> dict:
+        return self._request("GET", f"/tasks/{urllib.parse.quote(task_id)}")
 
     # -- прогон AI-персон -------------------------------------------------
     def import_task(self, payload: dict) -> dict:
