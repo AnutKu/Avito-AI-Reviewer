@@ -65,7 +65,9 @@ h1, h2, h3, p { margin-top: 0; }
 .sidebar nav button { position: relative; display: flex; align-items: center; gap: 13px; border: 0; border-radius: 12px; color: #afb1bc; padding: 12px 13px; background: transparent; text-align: left; cursor: pointer; font-size: 13px; font-weight: 600; }
 .sidebar nav button:hover { color: #fff; background: #202330; }.sidebar nav button.active { background: #2a2d3c; color: #fff; }
 .sidebar nav button.active::before { content: ''; position: absolute; width: 3px; height: 21px; background: var(--blue); border-radius: 0 3px 3px 0; left: -14px; }
-.nav-icon { display: grid; place-items: center; width: 22px; font-size: 17px; }.nav-demo { margin-left: auto; color: #b784f8; font-size: 9px; text-transform: uppercase; }
+/* text-fill прозрачный + тень нулевого размера = глиф (в т.ч. цветной эмодзи
+   «Распределение») перекрашивается в текущий цвет кнопки и следует за hover/active. */
+.nav-icon { display: grid; place-items: center; width: 22px; font-size: 17px; -webkit-text-fill-color: transparent; text-shadow: 0 0 0 currentColor; }.nav-demo { margin-left: auto; color: #b784f8; font-size: 9px; text-transform: uppercase; }
 .side-help { margin-top: auto; display: flex; gap: 10px; align-items: center; padding: 14px 12px; background: #202330; border-radius: 14px; }
 .side-help > span { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: #343746; color: #ccc; }
 .side-help b, .side-help small { display: block; font-size: 10px; }.side-help small { color: #9294a2; margin-top: 3px; }
