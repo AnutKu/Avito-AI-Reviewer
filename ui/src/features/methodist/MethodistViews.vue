@@ -1,12 +1,16 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
-import DemoBadge from '../../shared/ui/DemoBadge.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 import TaskCreaterView from './TaskCreaterView.vue'
 
 const props = defineProps({ active: String })
-const dashboard = ref(null)
+const report = ref(null)            // объединённый дашборд: обзор + качество проверки
+const dashTab = ref('overview')
+const showAllCriteria = ref(false)
+const performance = ref(null)       // матрица «студент × задание»
+const perfSearch = ref('')
+const perfSort = ref('name')
 const distribution = ref([])        // работы, ожидающие распределения
 const assignedRows = ref([])        // распределённые работы — можно передать другому
 const reviewerLoads = ref([])
@@ -15,7 +19,6 @@ const registry = ref([])
 const registrySearch = ref('')
 const assignments = ref([])
 const courses = ref([])
-const analytics = ref(null)
 const course = ref(null)
 const error = ref('')
 const notice = ref('')
@@ -24,7 +27,11 @@ const statusFilter = ref('')
 async function load(active = props.active) {
   error.value = ''
   try {
-    if (active === 'methodist-dashboard') dashboard.value = await api('/methodist/dashboard')
+    if (active === 'methodist-dashboard') {
+      report.value = await api('/methodist/analytics')
+      if (!report.value.quality) dashTab.value = 'overview'   // вкладка выключена фиче-флагом
+    }
+    if (active === 'methodist-performance') performance.value = await api('/methodist/performance')
     if (active === 'methodist-distribution') {
       const s = await api('/methodist/distribution')
       autoAssign.value = s.auto_assign
@@ -39,7 +46,6 @@ async function load(active = props.active) {
     if (active === 'methodist-rubrics') {
       ;[assignments.value, courses.value] = await Promise.all([api('/methodist/assignments'), api('/methodist/courses')])
     }
-    if (active === 'methodist-analytics') analytics.value = await api('/methodist/analytics')
     if (active === 'methodist-settings') course.value = await api('/methodist/course')
   } catch (e) { error.value = e.message }
 }
@@ -47,6 +53,103 @@ async function load(active = props.active) {
 const isFull = (p) => p.slots_left <= 0
 const initials = (s) => s.split(' ').map(x => x[0]).join('').slice(0, 2)
 const waitingReady = computed(() => distribution.value.filter(x => x.chosen).length)
+
+// --- дашборд курса --------------------------------------------------------
+// Все цифры приходят посчитанными с сервера; здесь только формат и геометрия.
+const isNil = (v) => v === null || v === undefined
+const nf = (v) => (isNil(v) ? '—' : v)
+const pct = (v) => (isNil(v) ? '—' : `${Math.round(v)}%`)
+const hours = (v) => (isNil(v) ? '—' : v >= 24 ? `${(v / 24).toFixed(1)} дн` : `${v} ч`)
+const score = (v) => (isNil(v) ? '—' : String(Number(v).toFixed(1)).replace(/\.0$/, ''))
+
+const ov = computed(() => report.value?.overview || {})
+const quality = computed(() => report.value?.quality || null)
+const funnelMax = computed(() => Math.max(1, ...(report.value?.funnel || []).map(r => r.count)))
+const funnelWidth = (row) => `width:${Math.max(4, Math.round(row.count / funnelMax.value * 100))}%`
+
+const completedTrend = computed(() => {
+  const delta = ov.value.completed_delta
+  if (isNil(delta)) return { text: '—', good: false }
+  if (delta === 0) return { text: 'как неделей раньше', good: false }
+  return { text: `${delta > 0 ? '+' : '−'}${Math.abs(delta)} за неделю`, good: delta > 0 }
+})
+const leadTrend = computed(() => {
+  const delta = ov.value.lead_delta_pct
+  if (isNil(delta)) return { text: 'прошлую неделю не с чем сравнить', good: false }
+  if (!delta) return { text: 'без изменений к прошлой неделе', good: false }
+  // Меньше часов — лучше, поэтому «хорошо» это отрицательная дельта.
+  return { text: `${delta > 0 ? '+' : '−'}${Math.abs(Math.round(delta))}% к прошлой неделе`, good: delta < 0 }
+})
+const loadHint = computed(() => {
+  const rows = report.value?.reviewers || []
+  if (!rows.length) return 'Ревьюеры на курсе не заведены.'
+  const busiest = rows.reduce((a, b) => (b.load > a.load ? b : a))
+  const free = rows.reduce((sum, r) => sum + (r.available ? Math.max(0, r.slots_left) : 0), 0)
+  const off = rows.filter(r => !r.available).length
+  return `Свободный лимит на потоке — ${score(free)} работ. Самый загруженный: ${busiest.name} (${busiest.load}/${busiest.capacity}).`
+    + (off ? ` Снято с распределения: ${off}.` : '')
+})
+
+const CHART_W = 600
+const CHART_H = 180
+const weeks = computed(() => quality.value?.weekly || [])
+const agreementPoints = computed(() => {
+  const rows = weeks.value
+  const span = Math.max(1, rows.length - 1)
+  return rows
+    .map((row, index) => ({ row, index }))
+    .filter(p => !isNil(p.row.agreement))
+    .map(p => ({
+      x: Math.round(p.index / span * CHART_W),
+      y: Math.round(CHART_H - Math.min(100, Math.max(0, p.row.agreement)) / 100 * CHART_H),
+      value: p.row.agreement,
+    }))
+})
+const agreementLine = computed(() => agreementPoints.value.map(p => `${p.x},${p.y}`).join(' '))
+const agreementArea = computed(() => {
+  const points = agreementPoints.value
+  if (points.length < 2) return ''
+  return `${points[0].x},${CHART_H} ${agreementLine.value} ${points[points.length - 1].x},${CHART_H}`
+})
+const leadMax = computed(() => Math.max(1, ...weeks.value.map(r => r.avg_lead_hours || 0)))
+const barHeight = (row) => `height:${Math.max(2, Math.round((row.avg_lead_hours || 0) / leadMax.value * 140))}px`
+const criteriaRows = computed(() => {
+  const rows = quality.value?.criteria || []
+  return showAllCriteria.value ? rows : rows.slice(0, 8)
+})
+
+// --- успеваемость ---------------------------------------------------------
+const openStudents = ref(new Set())
+const toggleStudent = (id) => { openStudents.value.has(id) ? openStudents.value.delete(id) : openStudents.value.add(id) }
+const isStudentOpen = (id) => openStudents.value.has(id)
+const perfColumns = computed(() => {
+  // repeat(0, ...) — невалидный CSS, поэтому без заданий колонок просто нет.
+  const count = performance.value?.assignments?.length || 0
+  return `minmax(170px,1.4fr)${count ? ` repeat(${count}, minmax(92px,1fr))` : ''} 168px`
+})
+const perfRows = computed(() => {
+  const query = perfSearch.value.trim().toLowerCase()
+  const rows = (performance.value?.rows || []).filter(r => !query || r.student.toLowerCase().includes(query))
+  const sorted = [...rows]
+  if (perfSort.value === 'best') sorted.sort((a, b) => (b.totals.avg_percent ?? -1) - (a.totals.avg_percent ?? -1))
+  if (perfSort.value === 'risk') sorted.sort((a, b) => (a.totals.avg_percent ?? 101) - (b.totals.avg_percent ?? 101))
+  if (perfSort.value === 'gaps') sorted.sort((a, b) =>
+    (b.totals.expected - b.totals.submitted) - (a.totals.expected - a.totals.submitted))
+  return sorted
+})
+const cellText = (cell) => (cell.status === 'not_submitted' ? '×' : isNil(cell.score) ? '·' : score(cell.score))
+const cellClass = (cell) => {
+  if (cell.status === 'not_submitted') return 'miss'
+  if (isNil(cell.score)) return 'wip'
+  return cell.passed ? 'pass' : 'fail'
+}
+const cellTitle = (cell, column) => {
+  if (cell.status === 'not_submitted') return `${column.title}: не сдано`
+  const state = statusNames[cell.status] || cell.status
+  return isNil(cell.score)
+    ? `${column.title}: ${state}`
+    : `${column.title}: ${cell.score} из ${cell.max_score} (${state})`
+}
 
 const openGroups = ref(new Set())
 const toggleGroup = (id) => { openGroups.value.has(id) ? openGroups.value.delete(id) : openGroups.value.add(id) }
@@ -217,10 +320,126 @@ onMounted(load)
   <div v-if="notice" class="toast-success global-toast">✓ {{ notice }}<button @click="notice = ''">×</button></div>
   <div v-if="error" class="toast-error global-toast">{{ error }}<button @click="error = ''">×</button></div>
 
-  <section v-if="active === 'methodist-dashboard' && dashboard">
-    <div class="page-heading"><div><span class="eyebrow">ОБЗОР КУРСА</span><h1>Добрый день, Анна</h1><p>Главное по потоку на сегодня, 3 сентября</p></div><DemoBadge /></div>
-    <div class="metric-grid"><article><span class="metric-icon blue">▦</span><div><small>Всего работ</small><b>{{ dashboard.metrics.total }}</b><em>в потоке</em></div></article><article><span class="metric-icon green">✓</span><div><small>Проверено</small><b>{{ dashboard.metrics.completed }}</b><em class="positive">+8 за неделю</em></div></article><article><span class="metric-icon red">!</span><div><small>Просрочено</small><b>{{ dashboard.metrics.overdue }}</b><em>нужны действия</em></div></article><article><span class="metric-icon purple">◷</span><div><small>Среднее время</small><b>{{ dashboard.metrics.average_hours }} ч</b><em class="positive">−21% к прошлой неделе</em></div></article></div>
-    <div class="dashboard-grid"><article class="card"><div class="card-title"><div><h2>Воронка проверки</h2><p>Живые записи демо-БД: {{ dashboard.live_records }}</p></div><span>Последние 7 дней⌄</span></div><div class="funnel"><div v-for="(row, index) in dashboard.funnel" :key="row.status"><span>{{ statusNames[row.status] }}</span><div><i :style="`width:${Math.max(4, row.count * 25)}%`" :class="`bar-${index}`" /></div><b>{{ row.count }}</b></div></div></article><article class="card"><div class="card-title"><div><h2>Нагрузка ревьюеров</h2><p>Активные работы и доступность</p></div></div><div v-for="person in dashboard.reviewers" :key="person.id" class="reviewer-load"><span class="avatar purple">{{ person.name.split(' ').map(x => x[0]).join('') }}</span><div><b>{{ person.name }}</b><span><i :style="`width:${person.active / person.capacity * 100}%`" /></span></div><em>{{ person.active }} / {{ person.capacity }}</em></div><div class="insight"><span>✦</span><p><b>AI-подсказка</b>Распределение сбалансировано. У всех ревьюеров есть свободный кап.</p></div></article></div>
+  <section v-if="active === 'methodist-dashboard' && report">
+    <div class="page-heading">
+      <div><span class="eyebrow">ОБЗОР КУРСА</span><h1>Дашборд курса</h1><p>{{ report.course ? report.course.title : 'Курс' }} · посчитано по живым записям: {{ report.live_records }} работ, {{ ov.assignments }} опубликованных заданий</p></div>
+      <div class="dash-tabs"><button :class="{ active: dashTab === 'overview' }" @click="dashTab = 'overview'">Обзор</button><button v-if="report.quality" :class="{ active: dashTab === 'quality' }" @click="dashTab = 'quality'">Качество проверки</button></div>
+    </div>
+
+    <template v-if="dashTab === 'overview'">
+      <div class="metric-grid">
+        <article><span class="metric-icon blue">▦</span><div><small>Сдано работ</small><b>{{ ov.submitted }}</b><em>{{ pct(ov.submission_rate) }} от ожидаемых · всего {{ ov.expected }}</em></div></article>
+        <article><span class="metric-icon green">✓</span><div><small>Проверено</small><b>{{ ov.completed }}</b><em :class="{ positive: completedTrend.good }">{{ completedTrend.text }}</em></div></article>
+        <article><span class="metric-icon red">!</span><div><small>Просрочено</small><b>{{ ov.overdue }}</b><em>{{ ov.overdue ? 'сданы после дедлайна' : 'дедлайны соблюдены' }}</em></div></article>
+        <article><span class="metric-icon purple">◷</span><div><small>Сдача → результат</small><b>{{ hours(ov.avg_lead_hours) }}</b><em :class="{ positive: leadTrend.good }">{{ leadTrend.text }}</em></div></article>
+      </div>
+
+      <div class="mini-metrics">
+        <span><b>{{ score(ov.avg_score) }}</b><small>средний балл</small></span>
+        <span><b>{{ pct(ov.pass_rate) }}</b><small>зачётов</small></span>
+        <span><b>{{ pct(ov.ai_agreement) }}</b><small>согласие с AI</small></span>
+        <span><b>{{ nf(ov.in_progress) }}</b><small>у ревьюеров</small></span>
+        <span><b>{{ nf(ov.waiting) }}</b><small>ждут распределения</small></span>
+        <span><b>{{ nf(ov.not_submitted) }}</b><small>не сдано</small></span>
+      </div>
+
+      <div class="dashboard-grid">
+        <article class="card">
+          <div class="card-title"><div><h2>Воронка проверки</h2><p>Где сейчас находятся сданные работы</p></div></div>
+          <div class="funnel"><div v-for="(row, index) in report.funnel" :key="row.status"><span>{{ statusNames[row.status] }}</span><div><i :style="funnelWidth(row)" :class="`bar-${index}`" /></div><b>{{ row.count }}</b></div></div>
+        </article>
+        <article class="card">
+          <div class="card-title"><div><h2>Нагрузка ревьюеров</h2><p>Активные работы и свободный лимит</p></div></div>
+          <div v-for="person in report.reviewers" :key="person.id" class="reviewer-load"><span class="avatar purple">{{ initials(person.name) }}</span><div><b>{{ person.name }}</b><span><i :style="`width:${Math.min(100, person.load / person.capacity * 100)}%`" /></span></div><em>{{ person.load }} / {{ person.capacity }}</em></div>
+          <div class="insight"><span>▲</span><p><b>Что видно по данным</b>{{ loadHint }}</p></div>
+        </article>
+      </div>
+    </template>
+
+    <template v-else-if="report.quality">
+      <div class="analytics-grid">
+        <article class="card">
+          <div class="card-title"><div><h2>Согласие AI и ревьюера</h2><p>Доля критериев, принятых без правки</p></div><strong class="large-positive">{{ pct(report.quality.agreement.rate) }}</strong></div>
+          <div class="line-chart">
+            <div class="chart-y"><span>100%</span><span>50%</span><span>0%</span></div>
+            <svg viewBox="0 0 600 180" preserveAspectRatio="none">
+              <defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b5cf6" stop-opacity=".25" /><stop offset="1" stop-color="#8b5cf6" stop-opacity="0" /></linearGradient></defs>
+              <polygon v-if="agreementArea" :points="agreementArea" fill="url(#area)" />
+              <polyline v-if="agreementLine" :points="agreementLine" fill="none" stroke="#8b5cf6" stroke-width="4" />
+              <circle v-for="point in agreementPoints" :key="point.x" :cx="point.x" :cy="point.y" r="5" fill="#8b5cf6" />
+            </svg>
+            <div class="chart-x"><span v-for="row in weeks" :key="row.week_start">{{ formatDate(row.week_start) }}</span></div>
+          </div>
+          <div class="agree-legend"><span><b>{{ report.quality.agreement.accepted }}</b> принято</span><span><b>{{ report.quality.agreement.changed }}</b> исправлено</span><span><b>{{ report.quality.agreement.rejected }}</b> отклонено</span><span>из <b>{{ report.quality.agreement.decided }}</b> решений</span></div>
+        </article>
+        <article class="card">
+          <div class="card-title"><div><h2>Сдача → результат</h2><p>Среднее время по неделям, часы</p></div><strong>{{ hours(ov.avg_lead_hours) }}</strong></div>
+          <div class="time-bars"><div v-for="row in weeks" :key="row.week_start"><i :style="barHeight(row)" /><span>{{ nf(row.avg_lead_hours) }}</span><small>{{ formatDate(row.week_start) }}</small></div></div>
+        </article>
+      </div>
+
+      <article class="card corrections">
+        <div class="card-title"><div><h2>Критерии с частыми правками</h2><p>Ревьюер меняет или отклоняет оценку AI — кандидаты на уточнение формулировки</p></div><span v-if="criteriaRows.length" class="warning-chip">! максимум {{ pct(criteriaRows[0].correction_rate) }}</span></div>
+        <div v-for="row in criteriaRows" :key="row.key" class="correction-row">
+          <b>{{ row.title }}</b>
+          <div><i :style="`width:${Math.max(2, row.correction_rate)}%`" /></div>
+          <strong>{{ pct(row.correction_rate) }}</strong>
+          <small>{{ row.reviews }} ревью · AI {{ score(row.avg_ai) }} → {{ score(row.avg_final) }}</small>
+        </div>
+        <div v-if="!criteriaRows.length" class="empty-mini">Ревьюеры ещё не приняли ни одного решения по критериям.</div>
+        <button v-if="report.quality.criteria.length > 8" class="text-button" @click="showAllCriteria = !showAllCriteria">{{ showAllCriteria ? 'свернуть' : `показать все · ${report.quality.criteria.length}` }}</button>
+      </article>
+
+      <article class="card">
+        <div class="card-title"><div><h2>Ревьюеры</h2><p>Производительность за всё время и текущая загрузка</p></div></div>
+        <div class="rev-stats">
+          <div class="rev-stats-head"><span>Ревьюер</span><span>Проверено</span><span>Время проверки</span><span>Согласие с AI</span><span>Средний результат</span><span>Сейчас в работе</span></div>
+          <div v-for="person in report.reviewers" :key="person.id">
+            <span class="student-cell"><i>{{ initials(person.name) }}</i><span><b>{{ person.name }}</b><small>{{ person.available ? 'в распределении' : 'снят с распределения' }}</small></span></span>
+            <span>{{ person.completed }}</span>
+            <span>{{ hours(person.avg_review_hours) }}</span>
+            <span>{{ pct(person.agreement) }}<small>{{ person.decided }} решений</small></span>
+            <span>{{ pct(person.avg_percent) }}</span>
+            <span>{{ person.load }} / {{ person.capacity }}</span>
+          </div>
+        </div>
+      </article>
+
+      <p class="data-note">AI-прогоны: {{ report.quality.ai_runs.ready }} готово · {{ report.quality.ai_runs.failed }} с ошибкой · {{ report.quality.ai_runs.pending }} в очереди.<template v-if="report.demo_reviews"> Из {{ report.live_records }} работ {{ report.demo_reviews }} проверены демо-фикстурами курса.</template></p>
+    </template>
+  </section>
+
+  <section v-else-if="active === 'methodist-performance' && performance">
+    <div class="page-heading"><div><span class="eyebrow">УСПЕВАЕМОСТЬ</span><h1>Таблица успеваемости</h1><p>{{ performance.course ? performance.course.title : 'Курс' }} · опубликованные задания. В ячейке — итоговый балл после ревью</p></div></div>
+    <div class="metric-grid">
+      <article><span class="metric-icon blue">▦</span><div><small>Студентов</small><b>{{ performance.summary.students }}</b><em>{{ performance.summary.assignments }} заданий в зачёте</em></div></article>
+      <article><span class="metric-icon green">✓</span><div><small>Сдано</small><b>{{ performance.summary.submitted }} / {{ performance.summary.expected }}</b><em>{{ pct(performance.summary.submission_rate) }} ожидаемых работ</em></div></article>
+      <article><span class="metric-icon purple">◷</span><div><small>Средний результат</small><b>{{ pct(performance.summary.avg_percent) }}</b><em>от максимума по рубрике · зачётов {{ pct(performance.summary.pass_rate) }}</em></div></article>
+      <article><span class="metric-icon red">!</span><div><small>В зоне риска</small><b>{{ performance.summary.at_risk }}</b><em>средний результат ниже 60%</em></div></article>
+    </div>
+    <div class="registry-tools"><label class="search">⌕<input v-model="perfSearch" placeholder="Студент" /></label><select v-model="perfSort"><option value="name">По алфавиту</option><option value="best">Сначала сильные</option><option value="risk">Сначала отстающие</option><option value="gaps">Больше всего пропусков</option></select></div>
+
+    <div v-if="perfRows.length && performance.assignments.length" class="table-card perf-table">
+      <div class="table-row table-head" :style="{ gridTemplateColumns: perfColumns }"><span>Студент</span><span v-for="column in performance.assignments" :key="column.id" :title="column.title">{{ column.title }}</span><span>Итог</span></div>
+      <template v-for="row in perfRows" :key="row.student_id">
+        <button class="table-row perf-row" :style="{ gridTemplateColumns: perfColumns }" @click="toggleStudent(row.student_id)">
+          <span class="student-cell"><i>{{ initials(row.student) }}</i><span><b>{{ row.student }}</b><small>{{ isStudentOpen(row.student_id) ? 'свернуть' : 'подробнее' }}</small></span></span>
+          <span v-for="(cell, index) in row.cells" :key="cell.assignment_id" class="perf-cell" :class="cellClass(cell)" :title="cellTitle(cell, performance.assignments[index])">{{ cellText(cell) }}</span>
+          <span class="perf-total"><b>{{ pct(row.totals.avg_percent) }}</b><small>сдано {{ row.totals.submitted }}/{{ row.totals.expected }} · зачётов {{ row.totals.passed }}</small></span>
+        </button>
+        <div v-if="isStudentOpen(row.student_id)" class="perf-detail">
+          <div v-for="(cell, index) in row.cells" :key="cell.assignment_id">
+            <b>{{ performance.assignments[index].title }}</b>
+            <StatusBadge :status="cell.status" />
+            <em>{{ isNil(cell.score) ? '—' : `${score(cell.score)} / ${cell.max_score}` }}</em>
+            <small>{{ cell.reviewer || 'ревьюер не назначен' }}</small>
+            <small :class="{ danger: cell.is_overdue }">{{ cell.submitted_at ? formatDate(cell.submitted_at, true) : 'не сдано' }}</small>
+          </div>
+        </div>
+      </template>
+      <div class="table-row perf-foot" :style="{ gridTemplateColumns: perfColumns }"><span>Итого по заданию</span><span v-for="column in performance.assignments" :key="column.id" class="perf-cell"><b>{{ pct(column.stats.avg_percent) }}</b><small>{{ column.stats.submitted }}/{{ column.stats.expected }}</small></span><span class="perf-total"><b>{{ pct(performance.summary.avg_percent) }}</b><small>зачётов {{ pct(performance.summary.pass_rate) }}</small></span></div>
+    </div>
+    <div v-else class="empty-state"><span>∅</span><h2>Показывать нечего</h2><p>Опубликуйте задание в «Задания и критерии» или измените поиск.</p></div>
   </section>
 
   <section v-else-if="active === 'methodist-distribution'">
@@ -356,12 +575,6 @@ onMounted(load)
   </section>
 
   <TaskCreaterView v-else-if="active === 'methodist-taskcreater'" />
-
-  <section v-else-if="active === 'methodist-analytics' && analytics">
-    <div class="page-heading"><div><span class="eyebrow">КАЧЕСТВО ПРОВЕРКИ</span><h1>Аналитика</h1><p>Где AI и ревьюеры расходятся и как меняется скорость проверки</p></div><DemoBadge /></div>
-    <div class="analytics-grid"><article class="card"><div class="card-title"><div><h2>Согласие AI и ревьюера</h2><p>Доля принятых рекомендаций</p></div><strong class="large-positive">84%</strong></div><div class="line-chart"><div class="chart-y"><span>100%</span><span>75%</span><span>50%</span></div><svg viewBox="0 0 600 180" preserveAspectRatio="none"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b5cf6" stop-opacity=".25"/><stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/></linearGradient></defs><path d="M0 120 C100 110 130 90 200 95 S320 65 400 60 S510 38 600 30 L600 180 L0 180Z" fill="url(#area)"/><path d="M0 120 C100 110 130 90 200 95 S320 65 400 60 S510 38 600 30" fill="none" stroke="#8b5cf6" stroke-width="4"/></svg><div class="chart-x"><span v-for="point in analytics.weekly" :key="point.week">{{ point.week }}</span></div></div></article><article class="card"><div class="card-title"><div><h2>Время ревью</h2><p>Медиана на одну работу</p></div><strong>16 мин</strong></div><div class="time-bars"><div v-for="point in analytics.weekly" :key="point.week"><i :style="`height:${point.review_time * 4}px`" /><span>{{ point.review_time }}</span><small>{{ point.week }}</small></div></div></article></div>
-    <article class="card corrections"><div class="card-title"><div><h2>Критерии с частыми правками</h2><p>Кандидаты на уточнение формулировок</p></div><span class="warning-chip">! Требуют внимания</span></div><div v-for="row in analytics.criteria" :key="row.title" class="correction-row"><b>{{ row.title }}</b><div><i :style="`width:${row.correction_rate}%`" /></div><strong>{{ row.correction_rate }}%</strong><small>{{ row.reviews }} ревью</small></div></article>
-  </section>
 
   <section v-else-if="active === 'methodist-settings' && course">
     <div class="page-heading"><div><span class="eyebrow">КУРС</span><h1>Настройки курса</h1><p>Правила коммуникации, нагрузки и дедлайнов</p></div><button class="primary" @click="saveCourse">Сохранить изменения</button></div>
