@@ -10,8 +10,8 @@ import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import {
   AI_BLOCKS, PERSONA_TYPE, RUN_STATE, SEVERITY, SOLUTIONS_NOTE, criteriaTotal,
   decidedRecommendations, fieldTitle, filterAssignments, isDirty, kindLabel, kindWhy,
-  openRecommendations, personaAbout, personaFace, personaName, publishBlockers, runIntro,
-  runTitle, samplingNote, scoreWarning, sortAssignments, splitByPublication,
+  cleanCriterion, openRecommendations, personaAbout, personaFace, personaName, publishBlockers,
+  runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning, sortAssignments, splitByPublication,
 } from '../../shared/taskbank'
 
 const props = defineProps({ sub: { type: Array, default: () => [] } })
@@ -56,6 +56,16 @@ const view = computed(() => {
 const editedId = computed(() => (view.value === 'editor' && props.sub[0] !== 'new' ? props.sub[0] : null))
 
 // --- редактор -------------------------------------------------------------
+// Следующий уровень: от «не выполнено» вверх к максимуму. Ставить каждый раз 0
+// бессмысленно — методист всё равно правит порог руками.
+function nextLevel(criterion) {
+  const used = (criterion.rubric_levels || []).map(l => Number(l.points) || 0)
+  const top = Number(criterion.max_score) || 1
+  if (!used.length) return { points: 0, label: 'Не выполнено', descriptor: '' }
+  const next = Math.min(top, Math.max(...used) + Math.max(0.5, top / 3))
+  return { points: Math.round(next * 2) / 2, label: '', descriptor: '' }
+}
+
 const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '', description: '', expected_signals: [], rubric_levels: [] })
 const draft = ref(null)
 const saved = ref(null)
@@ -109,13 +119,7 @@ function authoringPayload(a) {
   }
 }
 
-const criteriaPayload = () => draft.value.criteria
-  .filter(c => (c.title || '').trim())
-  .map(c => ({
-    key: c.key || '', title: c.title, max_score: Number(c.max_score) || 1,
-    student_hint: c.student_hint || '', description: c.description || '',
-    expected_signals: c.expected_signals || [], rubric_levels: c.rubric_levels || [],
-  }))
+const criteriaPayload = () => draft.value.criteria.filter(c => (c.title || '').trim()).map(cleanCriterion)
 
 // --- AI-инструменты -------------------------------------------------------
 const aiBusy = ref('')
@@ -126,8 +130,12 @@ const generating = ref(false)
 
 // --- прогон ---------------------------------------------------------------
 const runChoice = ref(false)
-const runType = ref('both')
-const runSamples = ref(1)
+// Галочки, а не выбор из трёх: «оба» — это не третий вид проверки, а обе
+// выбранные сразу. Отдельным вариантом он выглядел как что-то ещё.
+const checkStudents = ref(true)
+const checkReviewers = ref(true)
+const runType = computed(() => runTypeFrom(checkStudents.value, checkReviewers.value))
+const runSamples = ref(5)
 const starting = ref(false)
 const run = ref(null)
 const runs = ref([])
@@ -554,15 +562,22 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             </label>
 
             <div class="tb-crit-hidden">
-              <div>
-                <b>Признаки сильного ответа</b>
-                <ul v-if="c.expected_signals.length"><li v-for="(sig, si) in c.expected_signals" :key="si">{{ sig }}</li></ul>
-                <p v-else class="tb-crit-empty">не заданы — ревьюер не поймёт, что считать сильным ответом</p>
-              </div>
-              <div>
-                <b>Уровни и пороги</b>
-                <ul v-if="c.rubric_levels.length"><li v-for="(lv, li) in c.rubric_levels" :key="li"><em>{{ lv.points }}</em> {{ lv.label }} — {{ lv.descriptor }}</li></ul>
-                <p v-else class="tb-crit-empty">не заданы — балл будет ставиться на глаз</p>
+              <label class="tb-crit-field">Признаки сильного ответа — по одному в строке
+                <textarea :value="c.expected_signals.join('\n')" rows="4" placeholder="приведён расчёт с формулой&#10;выбор обоснован сравнением с альтернативой"
+                          @input="c.expected_signals = $event.target.value.split('\n')" />
+                <small v-if="!c.expected_signals.some(Boolean)" class="tb-crit-empty">не заданы — ревьюер не поймёт, что считать сильным ответом</small>
+              </label>
+
+              <div class="tb-crit-field">
+                <span class="tb-crit-label">Уровни и пороги — от «не выполнено» до максимума</span>
+                <div v-for="(lv, li) in c.rubric_levels" :key="li" class="tb-level">
+                  <input v-model.number="lv.points" type="number" min="0" step="0.5" :max="c.max_score" title="баллы" />
+                  <input v-model="lv.label" placeholder="метка" title="метка уровня" />
+                  <input v-model="lv.descriptor" placeholder="что видно в работе" title="наблюдаемый признак" />
+                  <button class="text-button danger" title="убрать уровень" @click="c.rubric_levels.splice(li, 1)">×</button>
+                </div>
+                <p v-if="!c.rubric_levels.length" class="tb-crit-empty">не заданы — балл будет ставиться на глаз</p>
+                <button class="text-button" @click="c.rubric_levels.push(nextLevel(c))">＋ уровень</button>
               </div>
             </div>
 
@@ -571,9 +586,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
                 {{ detailing === i ? 'Дополняю…' : '✦ Дополнить признаки и уровни' }}
               </button>
               <span class="tb-spacer" />
-              <button class="text-button" :disabled="i === 0" @click="draft.criteria.splice(i - 1, 0, draft.criteria.splice(i, 1)[0])">↑</button>
-              <button class="text-button" :disabled="i === draft.criteria.length - 1" @click="draft.criteria.splice(i + 1, 0, draft.criteria.splice(i, 1)[0])">↓</button>
-              <button class="text-button danger" :disabled="draft.criteria.length < 2" @click="draft.criteria.splice(i, 1)">удалить</button>
+              <button class="text-button danger" :disabled="draft.criteria.length < 2" @click="draft.criteria.splice(i, 1)">удалить критерий</button>
             </footer>
           </article>
           <button class="text-button" @click="draft.criteria.push(emptyCriterion())">＋ ещё критерий</button>
@@ -627,7 +640,6 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
       </div>
       <div class="tb-head-actions">
         <button class="secondary" @click="go(run.assignment_id)">← К заданию</button>
-        <button v-if="run.status === 'completed'" class="secondary" @click="go(run.assignment_id)">Запустить другой тип</button>
       </div>
     </div>
 
@@ -765,27 +777,24 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
     <article class="card tb-modal-card">
       <h2>Что проверяем в этот раз</h2>
       <p class="tb-side-note">{{ SOLUTIONS_NOTE }}</p>
-      <label class="tb-choice" :class="{ active: runType === 'both' }">
-        <input v-model="runType" type="radio" value="both" />
-        <span><b>И задание, и критерии</b><small>Полный разбор: студенты решают задание, ревьюеры оценивают их решения по вашим критериям. Дольше и дороже, но за один заход видно обе стороны.</small></span>
+      <label class="tb-choice" :class="{ active: checkStudents }">
+        <input v-model="checkStudents" type="checkbox" />
+        <span><b>Задание — на AI-студентах</b><small>Студенты разного уровня пробуют выполнить задание и показывают, где формулировка неоднозначна, слишком сложна или не содержит нужных данных.</small></span>
       </label>
-      <label class="tb-choice" :class="{ active: runType === 'student' }">
-        <input v-model="runType" type="radio" value="student" />
-        <span><b>Только задание — на AI-студентах</b><small>Студенты разного уровня пробуют выполнить задание и показывают, где формулировка неоднозначна, слишком сложна или не содержит нужных данных.</small></span>
+      <label class="tb-choice" :class="{ active: checkReviewers }">
+        <input v-model="checkReviewers" type="checkbox" />
+        <span><b>Критерии — на AI-ревьюерах</b><small>Ревьюеры применяют критерии к решениям разного качества и показывают расхождения в оценках, дублирование и неоднозначные формулировки.</small></span>
       </label>
-      <label class="tb-choice" :class="{ active: runType === 'reviewer' }">
-        <input v-model="runType" type="radio" value="reviewer" />
-        <span><b>Только критерии — на AI-ревьюерах</b><small>Ревьюеры применяют критерии к решениям разного качества и показывают расхождения в оценках, дублирование и неоднозначные формулировки.</small></span>
-      </label>
+      <p v-if="!checkStudents && !checkReviewers" class="tb-warn">Выберите хотя бы одну проверку.</p>
 
       <label class="tb-samples">
         <span><b>Повторов оценки</b><small>Одно и то же решение оценивается несколько раз. Разброс баллов между повторами — это разброс самой модели: если он большой, виновата формулировка критерия, а не работа студента.</small></span>
-        <select v-model.number="runSamples"><option :value="1">1 — быстро</option><option :value="2">2</option><option :value="3">3 — видно разброс</option><option :value="5">5 — надёжнее всего</option></select>
+        <select v-model.number="runSamples"><option :value="1">1</option><option :value="3">3</option><option :value="5">5</option></select>
       </label>
 
       <div class="tb-rec-actions">
         <button class="text-button" @click="runChoice = false">Отмена</button>
-        <button class="primary" :disabled="starting" @click="startRun">{{ starting ? 'Запускаю…' : 'Запустить проверку' }}</button>
+        <button class="primary" :disabled="starting || !runType" @click="startRun">{{ starting ? 'Запускаю…' : 'Запустить проверку' }}</button>
       </div>
     </article>
   </div>
@@ -836,12 +845,15 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-crit-points { display: flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; font-size: 11px; color: var(--muted); }
 .tb-crit-points input { width: 76px; margin: 0; }
 .tb-crit-field { display: block; margin-top: 12px; }
-.tb-crit-hidden { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px;
-  padding-top: 12px; border-top: 1px dashed #dcdde3; font-size: 12px; }
-.tb-crit-hidden b { display: block; margin-bottom: 5px; font-size: 12px; }
-.tb-crit-hidden ul { margin: 0 0 0 16px; color: #4b5563; line-height: 1.55; }
-.tb-crit-hidden li em { font-style: normal; font-weight: 700; color: var(--blue); margin-right: 4px; }
-.tb-crit-empty { color: #9a6810; margin: 0; line-height: 1.5; }
+.tb-crit-hidden { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px;
+  padding-top: 12px; border-top: 1px dashed #dcdde3; }
+.tb-crit-hidden .tb-crit-field { margin-top: 0; }
+.tb-crit-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.tb-crit-empty { display: block; color: #9a6810; font-size: 11px; font-weight: 400; margin: 6px 0 0; line-height: 1.5; }
+/* Уровень — строка «баллы · метка · признак»: порог правится там же, где текст,
+   иначе шкалу приходится держать в голове. */
+.tb-level { display: grid; grid-template-columns: 74px 1fr 1.6fr 24px; gap: 6px; align-items: center; margin-bottom: 6px; }
+.tb-level input { margin-top: 0; padding: 8px 10px; font-size: 12px; }
 .tb-crit-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .tb-spacer { flex: 1; }
 

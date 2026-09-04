@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  cleanCriterion,
   criteriaTotal,
   filterAssignments,
   isDirty,
@@ -23,6 +24,7 @@ import {
   personaName,
   runIntro,
   runTitle,
+  runTypeFrom,
   samplingNote,
   scoreWarning,
   sortAssignments,
@@ -186,5 +188,50 @@ describe('проверка на персонах', () => {
     assert.equal(samplingNote(0), '')
     assert.match(samplingNote(3), /оценено 3 раз/)
     assert.match(samplingNote(3), /разброс самой модели/)
+  })
+})
+
+describe('выбор проверки', () => {
+  it('обе галочки — это один прогон по обоим слоям, а не третий вид', () => {
+    assert.equal(runTypeFrom(true, true), 'both')
+    assert.equal(runTypeFrom(true, false), 'student')
+    assert.equal(runTypeFrom(false, true), 'reviewer')
+  })
+
+  it('без галочек запускать нечего', () => {
+    assert.equal(runTypeFrom(false, false), null)
+  })
+})
+
+describe('критерий перед отправкой', () => {
+  it('уровни и признаки доезжают целиком', () => {
+    const clean = cleanCriterion({
+      title: 'Метрики', max_score: '6', description: 'признак',
+      expected_signals: ['есть формула', 'есть вывод'],
+      rubric_levels: [{ points: '0', label: 'Не выполнено', descriptor: 'нет' }],
+    })
+    assert.equal(clean.max_score, 6)
+    assert.deepEqual(clean.expected_signals, ['есть формула', 'есть вывод'])
+    assert.deepEqual(clean.rubric_levels, [{ points: 0, label: 'Не выполнено', descriptor: 'нет' }])
+  })
+
+  it('пустые строки признаков не уезжают в рубрику', () => {
+    const clean = cleanCriterion({ title: 'x', max_score: 1, expected_signals: ['есть формула', '', '   '] })
+    assert.deepEqual(clean.expected_signals, ['есть формула'])
+  })
+
+  it('недописанный уровень отбрасывается, а не портит шкалу', () => {
+    const clean = cleanCriterion({
+      title: 'x', max_score: 3,
+      rubric_levels: [{ points: 3, label: 'Полно', descriptor: '' }, { points: 0, label: '', descriptor: '' }],
+    })
+    assert.equal(clean.rubric_levels.length, 1)
+    assert.equal(clean.rubric_levels[0].label, 'Полно')
+  })
+
+  it('критерий без скрытой части не падает', () => {
+    const clean = cleanCriterion({ title: 'Метрики', max_score: 4 })
+    assert.deepEqual(clean.expected_signals, [])
+    assert.deepEqual(clean.rubric_levels, [])
   })
 })

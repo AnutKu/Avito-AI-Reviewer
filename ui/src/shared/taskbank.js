@@ -131,6 +131,32 @@ export const FIELD_TITLES = Object.fromEntries([
 
 export const fieldTitle = (field) => FIELD_TITLES[field] || field
 
+// Тип прогона из двух галочек. «Оба» — это не третий вид проверки, а обе
+// выбранные сразу; null означает, что запускать нечего.
+export function runTypeFrom(students, reviewers) {
+  if (students && reviewers) return 'both'
+  if (students) return 'student'
+  if (reviewers) return 'reviewer'
+  return null
+}
+
+// Критерий перед отправкой. Пустые строки признаков и недописанные уровни
+// отбрасываем здесь, а не в разметке: иначе в рубрику уезжает мусор, по
+// которому AI-ревьюер потом делает замечание.
+export function cleanCriterion(c) {
+  return {
+    key: c.key || '',
+    title: c.title,
+    max_score: Number(c.max_score) || 1,
+    student_hint: c.student_hint || '',
+    description: c.description || '',
+    expected_signals: (c.expected_signals || []).map(x => String(x).trim()).filter(Boolean),
+    rubric_levels: (c.rubric_levels || [])
+      .filter(l => String(l.label || '').trim() || String(l.descriptor || '').trim())
+      .map(l => ({ points: Number(l.points) || 0, label: l.label || '', descriptor: l.descriptor || '' })),
+  }
+}
+
 export function isDirty(draft, saved) {
   return JSON.stringify(draft) !== JSON.stringify(saved)
 }
