@@ -1,12 +1,15 @@
 <script setup>
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, formatDate } from '../../shared/api'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
 const props = defineProps({ active: String })
+// студенту незачем видеть внутреннюю кухню распределения
+const studentLabels = { proposed: 'На проверке', assigned: 'На проверке' }
 const loading = ref(true)
 const error = ref('')
 const assignments = ref([])
+const submittedCount = computed(() => assignments.value.filter(a => a.submission).length)
 const detail = ref(null)
 const result = ref(null)
 const blitz = ref([])
@@ -131,13 +134,13 @@ onUnmounted(() => {
 <template>
   <section v-if="active === 'student-assignments'">
     <template v-if="mode === 'list'">
-      <div class="page-heading"><div><span class="eyebrow">МОЁ ОБУЧЕНИЕ</span><h1>Мои задания</h1><p>Здесь собраны задания, статусы проверки и обратная связь</p></div><div class="progress-ring"><b>1/1</b><small>сдано</small></div></div>
+      <div class="page-heading"><div><span class="eyebrow">МОЁ ОБУЧЕНИЕ</span><h1>Мои задания</h1><p>Здесь собраны задания, статусы проверки и обратная связь</p></div><div class="progress-ring"><b>{{ submittedCount }}/{{ assignments.length }}</b><small>сдано</small></div></div>
       <div v-if="loading" class="skeleton-list"><i v-for="x in 3" :key="x" /></div>
       <div v-else class="assignment-list">
         <button v-for="item in assignments" :key="item.id" class="assignment-row" @click="openAssignment(item)">
           <span class="assignment-icon">⌁</span>
           <span class="assignment-main"><small>{{ item.course }}</small><b>{{ item.title }}</b><em>Дедлайн {{ formatDate(item.deadline_at) }}</em></span>
-          <StatusBadge v-if="item.submission" :status="item.submission.status" />
+          <StatusBadge v-if="item.submission" :status="item.submission.status" :labels="studentLabels" />
           <span v-else class="status status--new"><i />Не сдана</span>
           <span class="assignment-score"><b>{{ item.score ?? '—' }}</b><small>из 10</small></span><strong class="row-arrow">→</strong>
         </button>

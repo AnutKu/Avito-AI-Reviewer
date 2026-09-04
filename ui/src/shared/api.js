@@ -44,7 +44,7 @@ export function formatDate(value, withTime = false) {
 }
 
 export const statusNames = {
-  submitted: 'Принята', proposed: 'Ждёт распределения', assigned: 'Назначена',
+  not_submitted: 'Не сдал', submitted: 'Принята', proposed: 'Ждёт распределения', assigned: 'Назначена',
   in_review: 'На проверке', blitz_sent: 'Ждёт ответа', blitz_answered: 'Ответ получен',
   completed: 'Проверена',
 }

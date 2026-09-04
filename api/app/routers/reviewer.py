@@ -147,6 +147,42 @@ def queue(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -
     return result
 
 
+@router.get("/history")
+def history(user: User = Depends(reviewer_guard), db: Session = Depends(get_db)) -> list[dict]:
+    """Все работы, которые когда-либо были назначены этому ревьюеру, включая
+    завершённые и переданные другим."""
+
+    submission_ids = (
+        select(ReviewAssignment.submission_id)
+        .where(
+            ReviewAssignment.reviewer_id == user.id,
+            ReviewAssignment.approved_at.is_not(None),
+        )
+        .distinct()
+    )
+    rows = db.scalars(
+        select(Submission)
+        .where(Submission.id.in_(submission_ids))
+        .order_by(Submission.submitted_at.desc())
+    )
+    result = []
+    for submission in rows:
+        review = db.scalar(select(Review).where(Review.submission_id == submission.id))
+        active = db.scalar(
+            select(ReviewAssignment).where(
+                ReviewAssignment.submission_id == submission.id,
+                ReviewAssignment.is_active.is_(True),
+            )
+        )
+        data = submission_data(submission, user.full_name)
+        data["ai_status"] = review.ai_status if review else "failed"
+        data["final_score"] = review.final_score if review else None
+        data["completed_at"] = iso(review.completed_at) if review else None
+        data["is_current"] = bool(active and active.reviewer_id == user.id)
+        result.append(data)
+    return result
+
+
 @router.get("/submissions/{submission_id}/review")
 def review_screen(
     submission_id: UUID,

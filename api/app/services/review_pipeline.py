@@ -40,8 +40,10 @@ from ..models import (
     SignalKind,
     Snapshot,
     Submission,
+    SubmissionStatus,
 )
 from . import detection_scale
+from .status import transition
 from .ai_reviewer_client import (
     AiReviewerClient,
     AiReviewerError,
@@ -331,6 +333,11 @@ def expire_blitz_sessions(db: Session) -> int:
 
     Подметается при чтении очереди, как и зависшие прогоны: планировщика нет, а
     висящий «ожидает ответа» блокирует ревьюеру завершение работы навсегда.
+
+    Закрыть опрос мало — работу надо вернуть ревьюеру. Завершение разрешено из
+    `in_review` и `blitz_answered`, так что оставшийся `blitz_sent` держал бы её
+    ровно так же, как держал незакрытый опрос. Переход обратно в `in_review`
+    предусмотрен потоком статусов: студент не ответил — ход снова за человеком.
     """
 
     now = datetime.now(UTC)
@@ -343,6 +350,12 @@ def expire_blitz_sessions(db: Session) -> int:
     ]
     for session in expired:
         session.status = BlitzStatus.EXPIRED
+        review = db.get(Review, session.review_id)
+        submission = db.get(Submission, review.submission_id) if review else None
+        if submission and submission.status == SubmissionStatus.BLITZ_SENT:
+            transition(
+                db, submission, SubmissionStatus.IN_REVIEW, comment="Срок ответа на блиц истёк"
+            )
     if expired:
         db.commit()
     return len(expired)

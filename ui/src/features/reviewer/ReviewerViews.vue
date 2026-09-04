@@ -1,22 +1,36 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate } from '../../shared/api'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
 const props = defineProps({ active: String })
 const emit = defineEmits(['navigate'])
 const queue = ref([])
+const history = ref([])
 const current = ref(null)
 const error = ref('')
 const notice = ref('')
 const feedback = ref('')
 const loading = ref(true)
+const showAllQueue = ref(false)
+
+// По умолчанию в очереди — работы, которые ждут действия ревьюера.
+// «blitz_sent» = ждём ответа студента, взять в работу нельзя.
+const ACTIONABLE = ['assigned', 'in_review', 'blitz_answered']
+const visibleQueue = computed(() =>
+  showAllQueue.value ? queue.value : queue.value.filter(i => ACTIONABLE.includes(i.status)),
+)
 
 async function loadQueue() {
   loading.value = true
   try { queue.value = await api('/reviewer/queue') }
   catch (e) { error.value = e.message }
   finally { loading.value = false }
+}
+
+async function loadHistory() {
+  try { history.value = await api('/reviewer/history') }
+  catch (e) { error.value = e.message }
 }
 
 async function openReview(id) {
@@ -185,24 +199,47 @@ async function complete() {
   } catch (e) { error.value = e.message }
 }
 
-watch(() => props.active, value => { error.value = ''; if (value === 'reviewer-queue') loadQueue() })
-onMounted(loadQueue)
+watch(() => props.active, value => {
+  error.value = ''
+  if (value === 'reviewer-queue') loadQueue()
+  if (value === 'reviewer-history') loadHistory()
+})
+onMounted(() => { props.active === 'reviewer-history' ? loadHistory() : loadQueue() })
 </script>
 
 <template>
   <section v-if="active === 'reviewer-queue'">
-    <div class="page-heading"><div><span class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span><h1>Моя очередь</h1><p>Работы, назначенные после подтверждения методистом</p></div><div class="queue-summary"><b>{{ queue.length }}</b><small>активных работ</small></div></div>
-    <div class="filter-row"><button class="chip active">Все · {{ queue.length }}</button><button class="chip">Новые</button><button class="chip">В работе</button><button class="chip">С риском срока</button><span /><label>Сначала срочные⌄</label></div>
+    <div class="page-heading"><div><span class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span><h1>Моя очередь</h1><p>Работы, которые ждут вашего решения</p></div><div class="queue-summary"><b>{{ visibleQueue.length }}</b><small>ждут действия</small></div></div>
+    <div class="filter-row">
+      <label class="chk"><input type="checkbox" v-model="showAllQueue" /> Показывать все актуальные работы</label>
+      <span />
+      <small v-if="!showAllQueue && queue.length > visibleQueue.length">скрыто «ждёт ответа студента»: {{ queue.length - visibleQueue.length }}</small>
+    </div>
     <div class="table-card">
       <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>AI-разбор</span><span>Срок</span><span /></div>
-      <button v-for="item in queue" :key="item.id" class="table-row" @click="openReview(item.id)">
+      <button v-for="item in visibleQueue" :key="item.id" class="table-row" :disabled="item.status === 'blitz_sent'" @click="item.status !== 'blitz_sent' && openReview(item.id)">
         <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}</small></span></span>
         <StatusBadge :status="item.status" />
         <span class="ai-ready" :class="[item.ai_status, { demo: item.is_demo }]"><i>✦</i>{{ item.is_demo ? 'Демо-фикстура' : item.ai_status === 'ready' ? 'Готов' : item.ai_status }}</span>
         <span :class="{ danger: item.deadline_risk }"><b>{{ formatDate(item.deadline_at, true) }}</b><small v-if="item.deadline_risk">Риск просрочки</small></span>
-        <strong class="row-arrow">→</strong>
+        <strong class="row-arrow">{{ item.status === 'blitz_sent' ? '⏳' : '→' }}</strong>
       </button>
-      <div v-if="!loading && !queue.length" class="empty-mini padded">Очередь пуста</div>
+      <div v-if="!loading && !visibleQueue.length" class="empty-mini padded">{{ queue.length ? 'Все работы в очереди ждут ответа студента — включите «показывать все актуальные»' : 'Очередь пуста' }}</div>
+    </div>
+  </section>
+
+  <section v-else-if="active === 'reviewer-history'">
+    <div class="page-heading"><div><span class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span><h1>История</h1><p>Все работы, которые были вам назначены, включая проверенные</p></div><div class="queue-summary"><b>{{ history.length }}</b><small>всего работ</small></div></div>
+    <div class="table-card">
+      <div class="table-row table-head"><span>Студент и работа</span><span>Статус</span><span>Балл</span><span>Сдано</span><span /></div>
+      <button v-for="item in history" :key="item.id" class="table-row" :disabled="!item.is_current || item.status === 'completed'" @click="item.is_current && item.status !== 'completed' && openReview(item.id)">
+        <span class="student-cell"><i>{{ item.student.split(' ').map(x => x[0]).join('').slice(0,2) }}</i><span><b>{{ item.student }}</b><small>{{ item.assignment }}</small></span></span>
+        <StatusBadge :status="item.status" />
+        <span><b>{{ item.final_score ?? '—' }}</b><small v-if="item.final_score != null">из 10</small></span>
+        <span><b>{{ formatDate(item.submitted_at, true) }}</b><small v-if="item.completed_at">проверено {{ formatDate(item.completed_at, true) }}</small></span>
+        <strong class="row-arrow">{{ item.is_current && item.status !== 'completed' ? '→' : '' }}</strong>
+      </button>
+      <div v-if="!history.length" class="empty-mini padded">Здесь появятся все проверенные вами работы</div>
     </div>
   </section>
 

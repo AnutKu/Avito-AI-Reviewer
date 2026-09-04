@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from .config import settings
 from .db import SessionLocal, engine
@@ -10,11 +11,26 @@ from .routers import auth, common, methodist, reviewer, student
 from .seed import seed_demo
 from .services.review_pipeline import recover_orphaned_detections, recover_orphaned_reviews
 
+# Точечные ALTER для колонок, добавленных после первого релиза, — чтобы
+# существующий demo-volume поднялся без пересоздания (Alembic в MVP нет).
+_COLUMN_MIGRATIONS = (
+    "ALTER TABLE courses ADD COLUMN IF NOT EXISTS auto_assign BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE assignments ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ",
+    # Задания, у которых уже есть сданные работы, — это точно не черновики:
+    # публикуем их один раз (на черновик без работ условие не сработает).
+    "UPDATE assignments a SET published_at = a.created_at "
+    "WHERE a.published_at IS NULL "
+    "AND EXISTS (SELECT 1 FROM submissions s WHERE s.assignment_id = a.id)",
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     del app
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        for statement in _COLUMN_MIGRATIONS:
+            connection.execute(text(statement))
     if settings.seed_on_start:
         with SessionLocal() as db:
             seed_demo(db)

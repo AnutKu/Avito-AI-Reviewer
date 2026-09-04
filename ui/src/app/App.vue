@@ -22,6 +22,7 @@ const allNav = {
   reviewer: [
     { id: 'reviewer-queue', label: 'Моя очередь', icon: '≡' },
     { id: 'reviewer-review', label: 'Ревью', icon: '✓' },
+    { id: 'reviewer-history', label: 'История', icon: '⟲' },
   ],
   methodist: [
     { id: 'methodist-dashboard', label: 'Дашборд курса', icon: '◫', demo: true },
