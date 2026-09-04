@@ -153,7 +153,9 @@ const cellTitle = (cell, column) => {
 
 const openGroups = ref(new Set())
 const toggleGroup = (id) => { openGroups.value.has(id) ? openGroups.value.delete(id) : openGroups.value.add(id) }
-const isGroupOpen = (id) => openGroups.value.has(id)
+// При активном поиске/фильтре раскрываем все совпавшие группы — иначе строки
+// прячутся под свёрнутым заголовком и кажется, что поиск не работает.
+const isGroupOpen = (id) => !!registrySearch.value.trim() || !!statusFilter.value || openGroups.value.has(id)
 const openCards = ref(new Set())
 const toggleCard = (id) => { openCards.value.has(id) ? openCards.value.delete(id) : openCards.value.add(id) }
 const isCardOpen = (id) => openCards.value.has(id)
@@ -275,15 +277,12 @@ function startEditAssignment(item) {
 async function saveAssignment(id) {
   const e = assignmentEdit.value
   try {
-    const res = await api(`/methodist/assignments/${id}`, { method: 'PATCH', body: JSON.stringify({
+    await api(`/methodist/assignments/${id}`, { method: 'PATCH', body: JSON.stringify({
       title: e.title, statement: e.statement,
       deadline_at: e.deadline_at ? new Date(e.deadline_at).toISOString() : null,
       effort_weight: Number(e.effort_weight) || 1, submission_channel: e.submission_channel,
     }) })
-    editAssignmentId.value = ''
-    notice.value = res.versioned ? `Задание обновлено — версия рубрики v${res.rubric_version}` : 'Задание обновлено'
-    if (versionsOpenId.value === id) rubricVersions.value = await api(`/methodist/assignments/${id}/rubrics`)
-    await load()
+    editAssignmentId.value = ''; notice.value = 'Изменения сохранены'; await load()
   } catch (err) { error.value = err.message }
 }
 
@@ -298,7 +297,7 @@ async function saveCriteria(item) {
       criteria: criteriaDraft.value.filter(c => c.title.trim()).map(c => ({ key: c.key || '', title: c.title, max_score: Number(c.max_score) || 1, student_hint: c.student_hint })),
       pass_score: item.pass_score ?? 0, note: 'Правка критериев',
     }) })
-    criteriaEditId.value = ''; notice.value = `Опубликована рубрика v${(item.rubric_version || 0) + 1}`; await load()
+    criteriaEditId.value = ''; notice.value = 'Изменения сохранены'; await load()
   } catch (e) { error.value = e.message }
 }
 
@@ -306,26 +305,6 @@ async function publishAssignment(item, published) {
   try {
     await api(`/methodist/assignments/${item.id}/publish`, { method: 'POST', body: JSON.stringify({ published }) })
     notice.value = published ? 'Задание опубликовано — видно студентам курса и в реестре работ' : 'Задание снято с публикации'
-    await load()
-  } catch (e) { error.value = e.message }
-}
-
-// --- история версий рубрики (откат «как в гите») -------------------------
-const versionsOpenId = ref('')
-const rubricVersions = ref([])
-async function toggleVersions(item) {
-  if (versionsOpenId.value === item.id) { versionsOpenId.value = ''; return }
-  try {
-    rubricVersions.value = await api(`/methodist/assignments/${item.id}/rubrics`)
-    versionsOpenId.value = item.id
-  } catch (e) { error.value = e.message }
-}
-async function restoreVersion(item, v) {
-  if (!window.confirm(`Вернуть версию рубрики v${v.version}? Её содержимое станет новой версией — история сохранится, старые оценки не изменятся.`)) return
-  try {
-    const res = await api(`/methodist/assignments/${item.id}/rubrics/${v.version}/restore`, { method: 'POST' })
-    notice.value = `Активна версия рубрики v${res.version} — копия v${res.restored_from}`
-    rubricVersions.value = await api(`/methodist/assignments/${item.id}/rubrics`)
     await load()
   } catch (e) { error.value = e.message }
 }
@@ -440,7 +419,7 @@ onMounted(load)
       <article><span class="metric-icon purple">◷</span><div><small>Средний результат</small><b>{{ pct(performance.summary.avg_percent) }}</b><em>от максимума по рубрике · зачётов {{ pct(performance.summary.pass_rate) }}</em></div></article>
       <article><span class="metric-icon red">!</span><div><small>В зоне риска</small><b>{{ performance.summary.at_risk }}</b><em>средний результат ниже 60%</em></div></article>
     </div>
-    <div class="registry-tools"><label class="search">⌕<input v-model="perfSearch" placeholder="Студент" /></label><select v-model="perfSort"><option value="name">По алфавиту</option><option value="best">Сначала сильные</option><option value="risk">Сначала отстающие</option><option value="gaps">Больше всего пропусков</option></select></div>
+    <div class="registry-tools"><label class="search"><input v-model="perfSearch" placeholder="Поиск по студенту" /></label><select v-model="perfSort"><option value="name">По алфавиту</option><option value="best">Сначала сильные</option><option value="risk">Сначала отстающие</option><option value="gaps">Больше всего пропусков</option></select></div>
 
     <div v-if="perfRows.length && performance.assignments.length" class="table-card perf-table">
       <div class="table-row table-head" :style="{ gridTemplateColumns: perfColumns }"><span>Студент</span><span v-for="column in performance.assignments" :key="column.id" :title="column.title">{{ column.title }}</span><span>Итог</span></div>
@@ -466,7 +445,7 @@ onMounted(load)
   </section>
 
   <section v-else-if="active === 'methodist-distribution'">
-    <div class="page-heading"><div><span class="eyebrow">УПРАВЛЕНИЕ ПОТОКОМ</span><h1>Распределение работ</h1><p>Специализация → минимальная нагрузка → round-robin при равенстве → кап курса</p></div><button v-if="!autoAssign" class="primary" :disabled="!waitingReady" @click="applyDistribution">Подтвердить всё · {{ waitingReady }}</button></div>
+    <div class="page-heading"><div><h1>Распределение работ</h1></div><button v-if="!autoAssign" class="primary" :disabled="!waitingReady" @click="applyDistribution">Подтвердить всё · {{ waitingReady }}</button></div>
     <label class="auto-toggle">
       <input type="checkbox" :checked="autoAssign" @change="toggleAuto" />
       <span><b>Автоматическое распределение</b><small>Новые работы назначаются сразу при сдаче и при снятии ревьюера — без ручного подтверждения. Конкретную работу всё равно можно передать другому ревьюеру ниже.</small></span>
@@ -506,7 +485,7 @@ onMounted(load)
 
   <section v-else-if="active === 'methodist-registry'">
     <div class="page-heading"><div><span class="eyebrow">УПРАВЛЕНИЕ ПОТОКОМ</span><h1>Реестр работ</h1><p>Опубликованные задания. Строка на каждого студента курса, включая не сдавших. Переназначение — на экране «Распределение»</p></div></div>
-    <div class="registry-tools"><label class="search">⌕<input v-model="registrySearch" placeholder="Студент или задание" /></label><select v-model="statusFilter"><option value="">Все статусы</option><option v-for="(name, key) in statusNames" :key="key" :value="key">{{ name }}</option></select></div>
+    <div class="registry-tools"><label class="search"><input v-model="registrySearch" placeholder="Поиск по студенту или заданию" /></label><select v-model="statusFilter"><option value="">Все статусы</option><option v-for="(name, key) in statusNames" :key="key" :value="key">{{ name }}</option></select></div>
 
     <div v-for="g in filteredRegistry" :key="g.assignment.id" class="reg-group">
       <button class="reg-group-head" @click="toggleGroup(g.assignment.id)">
@@ -529,7 +508,7 @@ onMounted(load)
   </section>
 
   <section v-else-if="active === 'methodist-rubrics'">
-    <div class="page-heading"><div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Задания и критерии</h1><p>Любая правка — критериев или самого задания — создаёт новую версию рубрики; через «Историю версий» можно откатиться на любую</p></div><button class="primary" @click="toggleNewAssignment">{{ showNewAssignment ? 'Отмена' : '＋ Новое задание' }}</button></div>
+    <div class="page-heading"><div><span class="eyebrow">КОНТЕНТ КУРСА</span><h1>Задания и критерии</h1><p>Список заданий по курсам. Условие и критерии можно править в любой момент — изменения применяются сразу</p></div><button class="primary" @click="toggleNewAssignment">{{ showNewAssignment ? 'Отмена' : '＋ Новое задание' }}</button></div>
 
     <article v-if="showNewAssignment && draft" class="card rubric-card assign-form">
       <h2>Новое задание</h2>
@@ -561,12 +540,12 @@ onMounted(load)
         <button class="rubric-card-head" @click="toggleCard(item.id)">
           <span class="reg-caret">{{ isCardOpen(item.id) || editAssignmentId === item.id || criteriaEditId === item.id ? '▾' : '▸' }}</span>
           <span class="rubric-card-title"><b>{{ item.title }}</b><small>{{ item.rubric.length }} критериев · трудоёмкость {{ item.effort_weight }}</small></span>
-          <span class="version-pill" :class="item.published ? 'pub' : 'draft'">{{ item.published ? 'Опубликовано' : 'Черновик' }} · v{{ item.rubric_version || '—' }}</span>
+          <span class="version-pill" :class="item.published ? 'pub' : 'draft'">{{ item.published ? 'Опубликовано' : 'Черновик' }}</span>
         </button>
 
         <div v-if="isCardOpen(item.id) || editAssignmentId === item.id || criteriaEditId === item.id" class="rubric-card-body">
           <template v-if="editAssignmentId === item.id && assignmentEdit">
-            <div class="card-title"><div><h2>Редактирование задания</h2></div><div class="tc-head-actions"><button class="secondary" @click="editAssignmentId = ''">Отмена</button><button class="primary" @click="saveAssignment(item.id)">Сохранить</button></div></div>
+            <div class="card-title"><div><h2>Редактирование задания</h2></div><div class="tc-head-actions"><button class="secondary" @click="editAssignmentId = ''">Отмена</button><button class="primary" @click="saveAssignment(item.id)">Сохранить изменения</button></div></div>
             <label>Название<input v-model="assignmentEdit.title" /></label>
             <label>Условие<textarea v-model="assignmentEdit.statement" rows="4" /></label>
             <div class="af-row">
@@ -576,7 +555,7 @@ onMounted(load)
             </div>
           </template>
           <template v-else-if="criteriaEditId === item.id">
-            <div class="card-title"><div><h2>Критерии · {{ item.title }}</h2><p>Сохранение публикует новую версию рубрики</p></div><div class="tc-head-actions"><button class="secondary" @click="criteriaEditId = ''">Отмена</button><button class="primary" @click="saveCriteria(item)">Опубликовать v{{ (item.rubric_version || 0) + 1 }}</button></div></div>
+            <div class="card-title"><div><h2>Критерии · {{ item.title }}</h2></div><div class="tc-head-actions"><button class="secondary" @click="criteriaEditId = ''">Отмена</button><button class="primary" @click="saveCriteria(item)">Сохранить изменения</button></div></div>
             <div v-for="(c, i) in criteriaDraft" :key="i" class="af-crit">
               <input v-model="c.title" placeholder="Название критерия" />
               <input v-model.number="c.max_score" type="number" min="0.5" step="0.5" />
@@ -589,16 +568,7 @@ onMounted(load)
             <p class="rubric-statement">{{ item.statement || 'Условие не заполнено' }}</p>
             <div class="rubric-summary"><span><b>{{ item.max_score ?? '—' }}</b><small>макс. балл</small></span><span><b>{{ item.rubric.length }}</b><small>критериев</small></span><span><b>{{ item.effort_weight }}</b><small>трудоёмкость</small></span><span><b>{{ item.deadline_at ? formatDate(item.deadline_at, true) : '—' }}</b><small>дедлайн</small></span></div>
             <div class="criteria-table"><div v-for="(criterion, index) in item.rubric" :key="criterion.key"><span>{{ index + 1 }}</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></div>
-            <div class="rubric-actions"><p>{{ item.rubric_note || '—' }}</p><button class="secondary" @click="toggleVersions(item)">{{ versionsOpenId === item.id ? 'Скрыть историю' : `История версий · ${item.rubric_versions || 1}` }}</button><button class="secondary" @click="startEditAssignment(item)">✎ Задание</button><button class="secondary" @click="startCriteria(item)">✎ Критерии</button><button v-if="!item.published" class="primary" @click="publishAssignment(item, true)">Опубликовать</button><button v-else class="secondary" @click="publishAssignment(item, false)">Снять с публикации</button></div>
-            <div v-if="versionsOpenId === item.id" class="version-history">
-              <div v-for="v in rubricVersions" :key="v.id" class="version-row" :class="{ current: v.is_current }">
-                <span class="vh-tag">v{{ v.version }}</span>
-                <span class="vh-main"><b>{{ v.note || '—' }}</b><small><template v-if="v.assignment_snapshot && v.assignment_snapshot.title !== item.title">«{{ v.assignment_snapshot.title }}» · </template>{{ v.criteria.length }} критериев · {{ v.max_score }} б. · проходной {{ v.pass_score }}<template v-if="v.author"> · {{ v.author }}</template><template v-if="v.published_at"> · {{ formatDate(v.published_at, true) }}</template></small></span>
-                <span v-if="v.is_current" class="vh-current">текущая</span>
-                <button v-else class="text-button" @click="restoreVersion(item, v)">Вернуть</button>
-              </div>
-              <p v-if="!rubricVersions.length" class="empty-mini">Версий пока нет.</p>
-            </div>
+            <div class="rubric-actions"><p>{{ item.rubric_note || '—' }}</p><button class="secondary" @click="startEditAssignment(item)">✎ Задание</button><button class="secondary" @click="startCriteria(item)">✎ Критерии</button><button v-if="!item.published" class="primary" @click="publishAssignment(item, true)">Опубликовать</button><button v-else class="secondary" @click="publishAssignment(item, false)">Снять с публикации</button></div>
           </template>
         </div>
       </article>
