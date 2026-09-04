@@ -431,6 +431,12 @@ def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get
             .select_from(RubricVersion)
             .where(RubricVersion.assignment_id == row.id)
         ) or 0
+        # Сколько работ уйдёт вместе с заданием, если его удалить.
+        data["submissions"] = db.scalar(
+            select(func.count())
+            .select_from(Submission)
+            .where(Submission.assignment_id == row.id)
+        ) or 0
         result.append(data)
     return result
 
@@ -541,31 +547,35 @@ def delete_assignment(
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Полное удаление задания вместе с версиями рубрики.
+    """Полное удаление задания: версии рубрики, сданные работы и их оценки.
 
-    Запрещено, если по заданию уже есть сданные работы — их оценки и история
-    так не теряются; для «убрать из выдачи» есть снятие с публикации."""
+    Разрешено только для неопубликованного задания — публикация и есть тот
+    рубеж, за которым удаление становится осознанным: студенты его больше не
+    видят, и методист сам решил, что задание в потоке не нужно. Снятые с
+    публикации работы удаляются вместе с заданием, вместе с оценками."""
 
     del user
     feature(settings.feature_rubric_builder)
     assignment = db.get(Assignment, assignment_id)
     if not assignment:
         raise HTTPException(404, "Задание не найдено")
-    submitted = db.scalar(
-        select(func.count())
-        .select_from(Submission)
-        .where(Submission.assignment_id == assignment_id)
-    ) or 0
-    if submitted:
+    if assignment.published_at is not None:
         raise HTTPException(
-            409,
-            f"Нельзя удалить: по заданию есть сданные работы ({submitted}). "
-            "Снимите его с публикации.",
+            409, "Нельзя удалить опубликованное задание. Сначала снимите его с публикации."
         )
+
+    # Порядок важен: `reviews.rubric_version_id` без ON DELETE, поэтому версии
+    # рубрики можно убирать только после того, как ушли ревью вместе с работами.
+    submission_ids = list(
+        db.scalars(select(Submission.id).where(Submission.assignment_id == assignment_id))
+    )
+    if submission_ids:
+        db.execute(delete(Submission).where(Submission.id.in_(submission_ids)))
+        db.flush()
     db.execute(delete(RubricVersion).where(RubricVersion.assignment_id == assignment_id))
     db.delete(assignment)
     db.commit()
-    return {"ok": True, "deleted": str(assignment_id)}
+    return {"ok": True, "deleted": str(assignment_id), "submissions": len(submission_ids)}
 
 
 @router.patch("/assignments/{assignment_id}")

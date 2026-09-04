@@ -410,12 +410,46 @@ def test_delete_assignment_removes_it_with_its_rubric_versions(methodist):
     assert methodist.get(f"/api/methodist/assignments/{created['id']}/rubrics").status_code == 404
 
 
-def test_delete_assignment_blocked_when_it_has_submissions(methodist):
-    groups = methodist.get("/api/methodist/submissions").json()
-    with_work = next(g for g in groups if g["stats"]["submitted"] > 0)
-    resp = methodist.delete(f"/api/methodist/assignments/{with_work['assignment']['id']}")
+def test_delete_blocked_while_the_assignment_is_published(methodist):
+    published = next(a for a in methodist.get("/api/methodist/assignments").json() if a["published"])
+    resp = methodist.delete(f"/api/methodist/assignments/{published['id']}")
     assert resp.status_code == 409
-    assert "сдан" in resp.json()["detail"].lower()
+    assert "снимите его с публикации" in resp.json()["detail"].lower()
+
+
+def test_unpublishing_lets_the_methodist_delete_the_work_and_its_grades(methodist):
+    from app.db import SessionLocal
+    from app.models import Review, RubricVersion, Submission
+
+    target = next(
+        a for a in methodist.get("/api/methodist/assignments").json()
+        if a["published"] and a["submissions"] > 0
+    )
+    with SessionLocal() as db:
+        sub_ids = list(
+            db.scalars(select(Submission.id).where(Submission.assignment_id == target["id"]))
+        )
+    assert len(sub_ids) == target["submissions"]
+
+    # пока опубликовано — нельзя
+    assert methodist.delete(f"/api/methodist/assignments/{target['id']}").status_code == 409
+
+    methodist.post(f"/api/methodist/assignments/{target['id']}/publish", json={"published": False})
+    resp = methodist.delete(f"/api/methodist/assignments/{target['id']}")
+    assert resp.status_code == 200 and resp.json()["submissions"] == len(sub_ids)
+
+    ids = [a["id"] for a in methodist.get("/api/methodist/assignments").json()]
+    assert target["id"] not in ids
+    with SessionLocal() as db:
+        assert db.scalars(
+            select(Submission).where(Submission.id.in_(sub_ids))
+        ).all() == [], "работы удалены вместе с заданием"
+        assert db.scalars(
+            select(Review).where(Review.submission_id.in_(sub_ids))
+        ).all() == [], "оценки ушли каскадом за работами"
+        assert db.scalars(
+            select(RubricVersion).where(RubricVersion.assignment_id == target["id"])
+        ).all() == [], "версии рубрики удалены"
 
 
 def test_delete_missing_assignment_is_404(methodist):
