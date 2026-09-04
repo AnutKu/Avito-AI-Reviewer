@@ -9,8 +9,8 @@ const props = defineProps({ active: String })
 const report = ref(null)            // объединённый дашборд: обзор + качество проверки
 const dashTab = ref('overview')
 const showAllCriteria = ref(false)
-const performance = ref(null)       // матрица «студент × задание»
-const perfTab = ref('matrix')       // matrix | registry (бывший «Реестр работ»)
+const performance = ref(null)       // журнал «студент × задание»
+const perfTab = ref('journal')      // journal | registry (бывший «Реестр работ»)
 const perfSearch = ref('')
 const perfSort = ref('name')
 const distribution = ref([])        // работы, ожидающие распределения
@@ -433,10 +433,10 @@ onMounted(load)
   <section v-else-if="active === 'methodist-performance' && performance">
     <div class="page-heading">
       <div><h1>Успеваемость</h1></div>
-      <div class="dash-tabs"><button :class="{ active: perfTab === 'matrix' }" @click="perfTab = 'matrix'">Матрица</button><button :class="{ active: perfTab === 'registry' }" @click="perfTab = 'registry'">Реестр работ</button></div>
+      <div class="dash-tabs"><button :class="{ active: perfTab === 'journal' }" @click="perfTab = 'journal'">Журнал</button><button :class="{ active: perfTab === 'registry' }" @click="perfTab = 'registry'">Реестр работ</button></div>
     </div>
 
-    <template v-if="perfTab === 'matrix'">
+    <template v-if="perfTab === 'journal'">
     <div class="metric-grid">
       <article><span class="metric-icon blue">▦</span><div><small>Студентов</small><b>{{ performance.summary.students }}</b><em>{{ performance.summary.assignments }} заданий в зачёте</em></div></article>
       <article><span class="metric-icon green">✓</span><div><small>Сдано</small><b>{{ performance.summary.submitted }} / {{ performance.summary.expected }}</b><em>{{ pct(performance.summary.submission_rate) }} ожидаемых работ</em></div></article>

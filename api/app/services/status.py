@@ -46,12 +46,21 @@ def record_initial(db: Session, submission: Submission, actor: User | None = Non
     )
 
 
-def overdue_risk(submission: Submission) -> bool:
-    """Работа, не начатая за 24 часа до дедлайна, — риск просрочки."""
+def deadline_state(submission: Submission) -> str | None:
+    """Состояние срока: `overdue` — срок прошёл, `risk` — меньше суток, иначе None.
+
+    Срок один на всё задание, поэтому и признак зависит только от него и от
+    того, закрыта ли работа. Раньше сюда примешивался статус (риск считался
+    только для `assigned`/`proposed`), и работа с тем же дедлайном переставала
+    быть красной, стоило ревьюеру её открыть, — одинаковый срок, разный цвет.
+    """
 
     deadline = submission.assignment.deadline_at if submission.assignment else None
-    if deadline is None or submission.status in (SubmissionStatus.COMPLETED,):
-        return False
-    if submission.status not in (SubmissionStatus.ASSIGNED, SubmissionStatus.PROPOSED):
-        return False
-    return datetime.now(UTC) + timedelta(hours=24) >= deadline
+    if deadline is None or submission.status == SubmissionStatus.COMPLETED:
+        return None
+    now = datetime.now(UTC)
+    if now >= deadline:
+        return "overdue"
+    if now + timedelta(hours=24) >= deadline:
+        return "risk"
+    return None
