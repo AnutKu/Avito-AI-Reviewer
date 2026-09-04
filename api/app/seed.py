@@ -85,6 +85,7 @@ def seed_demo(db: Session) -> None:
         deadline_at=now + timedelta(days=2),
         effort_weight=1.0,
         submission_channel="github",
+        published_at=now - timedelta(days=7),
     )
     db.add(assignment)
     db.flush()

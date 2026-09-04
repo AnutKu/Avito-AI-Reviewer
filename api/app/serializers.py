@@ -17,8 +17,12 @@ def assignment_data(assignment: Assignment, rubric: Any = None) -> dict:
         "effort_weight": assignment.effort_weight,
         "submission_channel": assignment.submission_channel,
         "course": assignment.course.title,
+        "course_id": str(assignment.course_id),
+        "published": assignment.published_at is not None,
+        "published_at": iso(assignment.published_at),
         "rubric": rubric.criteria if rubric else [],
         "max_score": rubric.max_score if rubric else None,
+        "pass_score": rubric.pass_score if rubric else None,
     }
 
 
