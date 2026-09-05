@@ -89,17 +89,6 @@ export function filterAssignments(rows, query) {
     || (r.authoring?.topic || '').toLowerCase().includes(q))
 }
 
-export function sortAssignments(rows, mode) {
-  const list = [...(rows || [])]
-  if (mode === 'title') return list.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'ru'))
-  if (mode === 'checked') {
-    // Сначала то, что давно не проверяли: непроверенное — самое срочное.
-    const stamp = (r) => (r.last_run?.completed_at ? Date.parse(r.last_run.completed_at) : 0)
-    return list.sort((a, b) => stamp(a) - stamp(b))
-  }
-  return list
-}
-
 // --- арифметика баллов -----------------------------------------------------
 
 // Критерий без названия ещё не заведён: он пустая карточка, которую методист

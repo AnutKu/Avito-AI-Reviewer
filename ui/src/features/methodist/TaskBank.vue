@@ -12,7 +12,7 @@ import {
   decidedRecommendations, fieldTitle, filterAssignments, isDirty, kindLabel, kindWhy,
   cleanCriterion, defaultPassScore, filledCriteria, openRecommendations, personaAbout, personaFace,
   personaName, publishBlockers, runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning,
-  sortAssignments, splitByPublication,
+  splitByPublication,
 } from '../../shared/taskbank'
 
 const props = defineProps({ sub: { type: Array, default: () => [] } })
@@ -39,11 +39,13 @@ watch(notice, (value) => {
 // --- список ---------------------------------------------------------------
 const tab = ref('published')
 const search = ref('')
-const sort = ref('recent')
 
+// Сортировка и фильтр по состоянию прогона убраны: на банке в десяток заданий
+// они добавляли органы управления, а не находимость. Порядок — как отдаёт
+// сервер (новые сверху), поиск — по названию, курсу и теме.
 const buckets = computed(() => splitByPublication(rows.value))
 const visible = computed(() =>
-  sortAssignments(filterAssignments(buckets.value[tab.value === 'published' ? 'published' : 'drafts'], search.value), sort.value))
+  filterAssignments(buckets.value[tab.value === 'published' ? 'published' : 'drafts'], search.value))
 
 // --- маршрут --------------------------------------------------------------
 // Экран выводится из хеша, а не из внутреннего флага: прямая ссылка, F5 и
@@ -139,6 +141,14 @@ const criteriaPayload = () => draft.value.criteria.filter(c => (c.title || '').t
 
 // --- AI-инструменты -------------------------------------------------------
 const aiBusy = ref('')
+// Автор пишет разметку, а видит её только студент. Переключатель показывает
+// блок так, как он выйдет наружу, — не уходя из редактора.
+const shownAs = ref(new Set())
+function togglePreview(field) {
+  const next = new Set(shownAs.value)
+  next.has(field) ? next.delete(field) : next.add(field)
+  shownAs.value = next
+}
 const preview = ref(null)     // { field, mode, current, proposed, note, editing }
 const ideaOpen = ref(false)
 const idea = ref({ idea: '', track: 'Аналитика данных', task_format: 'auto', total_points: 10, constraints: '' })
@@ -163,6 +173,10 @@ let polling = false
 
 const openRecs = computed(() => openRecommendations(run.value))
 const decidedRecs = computed(() => decidedRecommendations(run.value))
+// Применённые и отклонённые — разные исходы: после первых задание изменилось,
+// после вторых нет, и говорить о них одинаково значит путать.
+const appliedCount = computed(() =>
+  decidedRecs.value.filter(r => r.status === 'applied' || r.status === 'edited').length)
 
 // --------------------------------------------------------------------------
 
@@ -498,7 +512,11 @@ async function decide(rec, action, value = '') {
     })
     notice.value = { apply: 'Рекомендация применена', edit: 'Ваш вариант применён', reject: 'Рекомендация отклонена' }[action]
     recEdit.value = null
-    run.value = await api(`/methodist/ai-runs/${run.value.id}`)
+    // Применённая правка меняет само задание, а список в памяти об этом не
+    // знает: без перечитывания редактор открывался бы со старым текстом, и
+    // казалось бы, что правка не сохранилась.
+    const [fresh] = await Promise.all([api(`/methodist/ai-runs/${run.value.id}`), loadList()])
+    run.value = fresh
   } catch (e) { error.value = e.message } finally { deciding.value = '' }
 }
 
@@ -524,8 +542,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
     </div>
 
     <div class="registry-tools">
-      <label class="search"><input v-model="search" placeholder="Поиск по названию или курсу" /></label>
-      <select v-model="sort"><option value="recent">Сначала новые</option><option value="title">По названию</option><option value="checked">Давно не проверяли</option></select>
+      <label class="search"><input v-model="search" placeholder="Поиск по названию" /></label>
       <button class="text-button" @click="loadList">{{ loading ? 'Обновляю…' : 'Обновить' }}</button>
     </div>
 
@@ -609,11 +626,17 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
         <article v-for="block in AI_BLOCKS" :key="block.field" class="card">
           <div class="tb-block-head">
             <h2 class="tb-block-title">{{ block.title }}</h2>
-            <button class="text-button" :disabled="aiBusy === block.field" @click="askAi(block.field)">
-              {{ aiBusy === block.field ? '…' : (blockValue(block.field).trim() ? '✦ Улучшить с AI' : '✦ Заполнить с AI') }}
-            </button>
+            <span class="tb-block-tools">
+              <button v-if="blockValue(block.field).trim()" class="text-button" @click="togglePreview(block.field)">
+                {{ shownAs.has(block.field) ? 'править' : 'как увидит студент' }}
+              </button>
+              <button class="text-button" :disabled="aiBusy === block.field" @click="askAi(block.field)">
+                {{ aiBusy === block.field ? '…' : (blockValue(block.field).trim() ? '✦ Улучшить с AI' : '✦ Заполнить с AI') }}
+              </button>
+            </span>
           </div>
-          <textarea class="tb-area" :value="blockValue(block.field)" rows="5" @input="setBlock(block.field, $event.target.value)" />
+          <MarkdownText v-if="shownAs.has(block.field)" class="tb-preview-block" :text="blockValue(block.field)" />
+          <textarea v-else class="tb-area" :value="blockValue(block.field)" rows="5" @input="setBlock(block.field, $event.target.value)" />
         </article>
 
         <article class="card">
@@ -718,9 +741,6 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
         <p class="tb-crumbs"><button class="text-button" @click="go()">Банк заданий</button> / {{ runRow?.title || 'Задание' }}</p>
         <h1>{{ PERSONA_TYPE[run.persona_type] }}</h1>
       </div>
-      <div class="tb-head-actions">
-        <button class="secondary" @click="go(run.assignment_id)">← К заданию</button>
-      </div>
     </div>
 
     <p v-if="run.stale" class="cap-hint">ⓘ Результаты относятся к версии задания №{{ run.revision }}. Черновик с тех пор изменён — часть выводов может быть неактуальна.</p>
@@ -754,6 +774,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
       <article class="card" :class="run.summary?.verdict === 'ok' ? 'tb-ok' : 'tb-attention'">
         <h2>{{ run.summary?.verdict === 'ok' ? '✓ ' : '⚠ ' }}{{ run.summary?.headline }}</h2>
         <p class="tb-what">{{ runIntro(run.persona_type) }}</p>
+        <MarkdownText v-if="run.summary?.note" class="tb-what" :text="run.summary.note" />
         <div class="tb-counts">
           <span><b>{{ run.summary?.good }}</b></span>
           <span v-if="run.summary?.counts?.critical"><em class="tb-sev high">критично</em> {{ run.summary.counts.critical }}</span>
@@ -775,8 +796,8 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
                 <em v-if="p.total_points !== undefined && p.total_points !== null" class="tb-points">{{ p.total_points }} б.<i v-if="p.samples > 1"> · среднее из {{ p.samples }}</i></em>
               </span>
             </div>
-            <p v-if="p.approach" class="tb-persona-text">{{ p.approach }}</p>
-            <p v-if="p.comment" class="tb-persona-text">{{ p.comment }}</p>
+            <MarkdownText v-if="p.approach" class="tb-persona-text" :text="p.approach" />
+            <MarkdownText v-if="p.comment" class="tb-persona-text" :text="p.comment" />
             <ul v-if="p.troubles?.length" class="tb-persona-list"><li v-for="(t, i) in p.troubles" :key="i">не хватило в задании: {{ t }}</li></ul>
             <ul v-if="p.undecidable?.length" class="tb-persona-list"><li v-for="(t, i) in p.undecidable" :key="i">не хватило рубрики: {{ t }}</li></ul>
           </div>
@@ -811,11 +832,13 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             <b>{{ rec.kind ? kindLabel(rec.kind) : 'Правка критерия' }}</b>
             <span class="tb-where">{{ rec.target_type === 'criterion' ? `критерий «${rec.target_id}»` : fieldTitle(rec.target_field) }}</span>
           </div>
-          <p class="tb-why">{{ rec.problem || kindWhy(rec.kind) }}</p>
+          <MarkdownText class="tb-why" :text="rec.problem || kindWhy(rec.kind)" />
           <p v-if="rec.expected_effect" class="tb-effect">→ {{ rec.expected_effect }}</p>
           <details v-if="rec.evidence.length" class="tb-evidence"><summary>на чём основано</summary><p v-for="(e, i) in rec.evidence" :key="i">{{ e }}</p></details>
-          <div v-if="rec.original_value" class="tb-diff"><span class="was">{{ rec.original_value }}</span><span v-if="rec.proposed_value" class="now">{{ rec.proposed_value }}</span></div>
-          <div v-else-if="rec.proposed_value" class="tb-diff"><span class="now">{{ rec.proposed_value }}</span></div>
+          <div v-if="rec.original_value || rec.proposed_value" class="tb-diff">
+            <MarkdownText v-if="rec.original_value" class="was" :text="rec.original_value" />
+            <MarkdownText v-if="rec.proposed_value" class="now" :text="rec.proposed_value" />
+          </div>
 
           <div v-if="recEdit?.id === rec.id" class="tb-rec-edit">
             <textarea v-model="recEdit.value" rows="5" />
@@ -839,6 +862,18 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
           <b>{{ rec.target_type === 'criterion' ? `критерий «${rec.target_id}»` : fieldTitle(rec.target_field) }}</b>
           <small>{{ rec.rejection_reason || rec.problem }}</small>
         </div>
+      </article>
+
+      <article class="card tb-finish" :class="{ applied: appliedCount }">
+        <div>
+          <b v-if="appliedCount && !openRecs.length">✓ Изменения применены — можно возвращаться к заданию</b>
+          <b v-else-if="appliedCount">✓ Применено правок: {{ appliedCount }}. Остальные рекомендации ждут решения.</b>
+          <b v-else-if="decidedRecs.length">Все рекомендации отклонены — задание не изменилось.</b>
+          <b v-else-if="openRecs.length">Решите, что делать с рекомендациями, — задание пока не изменилось.</b>
+          <b v-else>Разбор закончен, менять нечего.</b>
+          <small v-if="appliedCount">Правки уже в задании: открывать нужно, только если хотите доработать вручную.</small>
+        </div>
+        <button class="primary" @click="go(run.assignment_id)">К заданию</button>
       </article>
 
       <p class="tb-meta" v-if="run.metrics?.total_tokens">Расход прогона: {{ run.metrics.total_tokens }} токенов ≈ {{ run.metrics.cost_rub }} ₽.</p>
@@ -869,7 +904,8 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
       <div class="tb-crit-proposed">
         <b>{{ critPreview.proposed.title }} · {{ critPreview.proposed.max_score }} б.</b>
         <p><small>Подсказка студенту</small>{{ critPreview.proposed.student_hint || '—' }}</p>
-        <p><small>Что проверяет ревьюер</small>{{ critPreview.proposed.description || '—' }}</p>
+        <p><small>Что проверяет ревьюер</small></p>
+        <MarkdownText :text="critPreview.proposed.description || '—'" />
         <p v-if="critPreview.proposed.expected_signals?.length"><small>Признаки сильного ответа</small></p>
         <ul v-if="critPreview.proposed.expected_signals?.length"><li v-for="(sig, si) in critPreview.proposed.expected_signals" :key="si">{{ sig }}</li></ul>
         <p v-if="critPreview.proposed.levels?.length"><small>Уровни и пороги</small></p>
@@ -936,6 +972,10 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-form .af-crit input { margin-top: 0; }
 .tb-block-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .tb-area { margin-top: 8px; padding: 11px 12px; }
+.tb-block-tools { display: flex; gap: 14px; align-items: center; }
+.tb-preview-block { margin-top: 8px; padding: 11px 13px; border: 1px dashed #dcdde3; border-radius: 10px;
+  background: #fcfcff; font-size: var(--fs-sm); line-height: 1.6; }
+.tb-preview-block :deep(p:last-child) { margin-bottom: 0; }
 .tb-status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .tb-dirty { color: #9a6810; font-size: var(--fs-xs); }
 .tb-wide { width: 100%; }
@@ -1054,8 +1094,12 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-effect { color: #6d28d9; font-weight: 600; margin: 4px 0 0; }
 .tb-evidence { margin-top: 6px; color: var(--muted); font-size: var(--fs-xs); }
 .tb-diff { display: grid; gap: 6px; margin-top: 8px; }
-.tb-diff .was { color: #9ca3af; text-decoration: line-through; white-space: pre-wrap; }
-.tb-diff .now { color: #065f46; background: #f0fdf7; border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; }
+.tb-diff .was { color: #9ca3af; text-decoration: line-through; }
+.tb-diff .now { color: #065f46; background: #f0fdf7; border-radius: 8px; padding: 8px 10px; }
+/* Разметка внутри предложения не должна ломать плотность строки долга/правки. */
+.tb-diff :deep(p), .tb-why :deep(p), .tb-persona-text :deep(p) { margin: 0 0 6px; }
+.tb-diff :deep(p:last-child), .tb-why :deep(p:last-child), .tb-persona-text :deep(p:last-child) { margin-bottom: 0; }
+.tb-diff :deep(ul), .tb-why :deep(ul), .tb-persona-text :deep(ul) { margin: 4px 0 4px 18px; }
 .tb-rec-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 12px; flex-wrap: wrap; }
 .tb-rec-edit textarea { display: block; width: 100%; margin-top: 8px; padding: 10px 12px; font: inherit; font-size: var(--fs-sm);
   border: 1px solid #dcdde3; border-radius: 10px; resize: vertical; }

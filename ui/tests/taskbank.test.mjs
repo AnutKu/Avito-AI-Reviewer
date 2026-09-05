@@ -32,7 +32,6 @@ import {
   runTypeFrom,
   samplingNote,
   scoreWarning,
-  sortAssignments,
   splitByPublication,
 } from '../src/shared/taskbank.js'
 import { parseHash } from '../src/shared/route.js'
@@ -61,10 +60,6 @@ describe('список', () => {
 
   it('пустой запрос ничего не отфильтровывает', () => {
     assert.equal(filterAssignments(ROWS, '   ').length, 3)
-  })
-
-  it('сортировка «давно не проверяли» поднимает непроверенное наверх', () => {
-    assert.deepEqual(sortAssignments(ROWS, 'checked').map(r => r.id), ['2', '3', '1'])
   })
 
   it('состояние прогона не подменяет статус публикации', () => {
