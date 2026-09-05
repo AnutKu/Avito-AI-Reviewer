@@ -286,5 +286,9 @@ class LlmCall(Base):
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    # Сколько заняла обработка. Стоимость система считала с самого начала, а
+    # время — нет, и на вопрос «сколько сейчас занимает проверка» приходилось
+    # отвечать секундомером. Теперь оно пишется само, на каждом вызове.
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = now_col()

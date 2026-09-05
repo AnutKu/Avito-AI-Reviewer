@@ -31,6 +31,7 @@ _COLUMN_MIGRATIONS = (
     "ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS samples INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS late_penalty DOUBLE PRECISION NOT NULL DEFAULT 0",
     "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS late_penalty_note TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS duration_ms INTEGER NOT NULL DEFAULT 0",
     # Градация внутри критерия какое-то время называлась `rubric_levels` — так её
     # звали в движке. В кабинете она `levels`, и по этому имени её читает экран
     # ревьюера. Переименовываем ключ в уже сохранённых рубриках, иначе заведённая
