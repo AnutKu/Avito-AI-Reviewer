@@ -3,12 +3,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from .config import settings
 from .db import SessionLocal, engine
-from .models import Base
+from .models import Base, Course
 from .routers import auth, common, methodist, reviewer, student
+from .real_course_loader import RESULTS as REAL_COURSE_RESULTS
+from .real_course_loader import restore as restore_real_course
 from .seed import seed_demo
 from .services.review_pipeline import recover_orphaned_detections, recover_orphaned_reviews
 from .services.task_ai import recover_orphaned_runs
@@ -46,6 +48,32 @@ _COLUMN_MIGRATIONS = (
 )
 
 
+def _fill_empty_cabinet(db) -> None:
+    """Чем наполнить пустой кабинет на старте.
+
+    По умолчанию — настоящим курсом: задания, критерии, работы студентов и
+    дословные ответы модели лежат в репозитории (`api/data/real_course`), так
+    что на новой машине достаточно поднять контейнеры. Ключ к модели для этого
+    не нужен: разборы не пересчитываются, а читаются из файла.
+
+    Демонстрационный курс остаётся запасным вариантом — на случай, когда файла
+    с ответами нет (например, в тестах, которые поднимают чистую базу).
+    Непустую базу не трогает ни тот, ни другой: своё содержимое кабинета
+    старт перезаписывать не должен.
+    """
+
+    if not settings.real_course_on_start or not REAL_COURSE_RESULTS.exists():
+        seed_demo(db)
+        return
+    if db.scalar(select(Course.id).limit(1)):
+        return
+    summary = restore_real_course(db)
+    logging.getLogger("uvicorn.error").info(
+        "загружен курс из репозитория: работ %s, разборов %s, закрыто %s",
+        summary["works"], summary["reviews"], summary["closed"],
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     del app
@@ -55,7 +83,7 @@ async def lifespan(app: FastAPI):
             connection.execute(text(statement))
     if settings.seed_on_start:
         with SessionLocal() as db:
-            seed_demo(db)
+            _fill_empty_cabinet(db)
     # AI-ревью выполняется в BackgroundTasks этого же процесса, поэтому всё, что
     # осталось в running, умерло вместе с предыдущим процессом. Без этого запись
     # висит в running навсегда и её нельзя ни перезапустить, ни завершить.
