@@ -185,6 +185,20 @@ h1, h2, h3, p { margin-top: 0; }
 .tb-sev.medium { background: #fef3c7; color: #92400e; }
 .tb-sev.low { background: #eef0f3; color: #4b5563; }
 
+/* Штраф за просрочку у ревьюера: арифметика на виду, снять — осознанным
+   действием. Оценка без объяснения, почему она такая, — повод для спора. */
+.penalty-box { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  flex-wrap: wrap; margin: 12px 0; padding: 12px 14px; border-radius: 10px;
+  background: #fff8ec; border: 1px solid #f2ddb8; }
+.penalty-box b { display: block; font-size: var(--fs-sm); color: #9a6810; }
+.penalty-box small { display: block; color: #6b6b80; font-size: var(--fs-2xs); margin-top: 3px; line-height: 1.5; }
+/* Студенту причина снижения балла нужна не меньше, чем сам балл. */
+.penalty-note { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: #fff8ec;
+  border: 1px solid #f2ddb8; color: #6b5528; font-size: var(--fs-xs); line-height: 1.55; }
+
+.penalty-waive { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); white-space: nowrap; }
+.penalty-waive input { width: auto; margin: 0; }
+
 .cap-hint { margin: 0 0 13px; padding: 9px 13px; background: #eef8ff; border: 1px solid #d5eefe; border-radius: 10px; color: #3d5566; font-size: var(--fs-xs); line-height: 1.5; }
 .cap-hint b { color: var(--blue); font-weight: 700; }
 .cap-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 13px; }

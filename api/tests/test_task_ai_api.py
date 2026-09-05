@@ -588,3 +588,61 @@ def test_a_fresh_task_reports_no_agreement_instead_of_a_hundred_percent(methodis
     ).json()["id"]
     row = next(r for r in methodist.get("/api/methodist/assignments").json() if r["id"] == created)
     assert row["agreement"] == {"decided": 0, "accepted": 0, "rate": None}
+
+
+# --- штраф за просрочку ----------------------------------------------------
+
+
+PENALTY = {"per_day": 1, "unit": "points", "max_penalty": 3}
+
+
+def test_a_penalty_rule_is_stored_with_the_task(methodist):
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "Со штрафом",
+            "authoring": {"late_penalty": PENALTY},
+            "criteria": [{"title": "Метрики", "max_score": 10}],
+        },
+    )
+    assert created.status_code == 201, created.text
+    row = next(
+        a for a in methodist.get("/api/methodist/assignments").json() if a["id"] == created.json()["id"]
+    )
+    assert row["authoring"]["late_penalty"] == PENALTY
+
+
+def test_a_broken_rule_is_refused_at_save_not_ignored_at_grading(methodist):
+    """Молча проигнорированное правило — худший исход: методист уверен, что
+    штраф работает, а узнаёт об этом через поток."""
+
+    for broken in ({"per_day": 0}, {"per_day": "много"}, {"per_day": 1, "unit": "бананов"}, "минус балл"):
+        response = methodist.post(
+            "/api/methodist/assignments",
+            json={
+                "title": "Кривое правило",
+                "authoring": {"late_penalty": broken},
+                "criteria": [{"title": "Метрики", "max_score": 10}],
+            },
+        )
+        assert response.status_code == 422, f"{broken} прошло молча"
+
+
+def test_no_rule_is_a_normal_task_not_an_error(methodist):
+    response = methodist.post(
+        "/api/methodist/assignments",
+        json={"title": "Без штрафа", "criteria": [{"title": "Метрики", "max_score": 10}]},
+    )
+    assert response.status_code == 201
+
+
+def test_an_empty_rule_switches_the_penalty_off(methodist):
+    response = methodist.post(
+        "/api/methodist/assignments",
+        json={
+            "title": "Штраф выключен",
+            "authoring": {"late_penalty": {}},
+            "criteria": [{"title": "Метрики", "max_score": 10}],
+        },
+    )
+    assert response.status_code == 201

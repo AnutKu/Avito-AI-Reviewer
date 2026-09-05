@@ -270,3 +270,37 @@ export function debtEmptyState(debt) {
   }
   return null
 }
+
+// --- штраф за просрочку -----------------------------------------------------
+
+// Правило редактируется как три поля, а хранится как объект. Пустое «сколько
+// снимать» означает «штрафа нет» — это обычное состояние, а не незаполненность.
+export function penaltyPayload(form) {
+  const perDay = Number(form?.per_day) || 0
+  if (perDay <= 0) return {}
+  const cap = Number(form?.max_penalty) || 0
+  return {
+    per_day: perDay,
+    unit: form.unit === 'percent' ? 'percent' : 'points',
+    ...(cap > 0 ? { max_penalty: cap } : {}),
+  }
+}
+
+export function penaltyForm(rule) {
+  return {
+    per_day: rule?.per_day ?? '',
+    unit: rule?.unit === 'percent' ? 'percent' : 'points',
+    max_penalty: rule?.max_penalty ?? '',
+  }
+}
+
+// Как правило читается человеком — тем же текстом, что и на стороне сервера.
+export function describePenalty(form) {
+  const rule = penaltyPayload(form)
+  if (!rule.per_day) return 'Штраф не назначен — просрочка не влияет на оценку.'
+  const unit = rule.unit === 'percent' ? '%' : ' б.'
+  const cap = rule.max_penalty ? `, но не больше −${rule.max_penalty}${unit}` : ''
+  // Без точки в конце: «б.» уже сокращение с точкой, вторая читается как опечатка.
+  // Та же формулировка живёт на сервере — их видят рядом, ревьюер и методист.
+  return `−${rule.per_day}${unit} за каждые начатые сутки просрочки${cap}`
+}

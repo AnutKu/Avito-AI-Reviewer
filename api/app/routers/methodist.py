@@ -31,7 +31,7 @@ from ..serializers import (
     recommendation_data,
     submission_data,
 )
-from ..services import task_ai
+from ..services import late_penalty, task_ai
 from ..services.analytics import agreement_by_assignment, course_report, performance_report
 from ..services.course_debt import debt_report
 from ..services.assignment import (
@@ -586,6 +586,7 @@ def create_assignment(
     db: Session = Depends(get_db),
 ) -> dict:
     feature(settings.feature_rubric_builder)
+    _check_penalty_rule(payload.authoring)
     course = (
         db.get(Course, payload.course_id)
         if payload.course_id
@@ -700,6 +701,7 @@ def update_assignment(
     assignment = db.get(Assignment, assignment_id)
     if not assignment:
         raise HTTPException(404, "Задание не найдено")
+    _check_penalty_rule(payload.authoring)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(assignment, field, value.strip() if isinstance(value, str) else value)
     db.flush()
@@ -980,6 +982,31 @@ def _bump_rubric(
     db.flush()
     assignment.current_rubric_version_id = rubric.id
     return rubric
+
+
+def _check_penalty_rule(authoring: dict | None) -> None:
+    """Правило штрафа проверяем при сохранении, а не при выставлении оценки.
+
+    Молча проигнорированное правило — худший исход: методист уверен, что штраф
+    работает, а узнает об этом через поток. Пустое правило — законный случай:
+    так штраф выключают.
+    """
+
+    raw = (authoring or {}).get("late_penalty")
+    if raw in (None, {}, ""):
+        return
+    if not isinstance(raw, dict):
+        raise HTTPException(422, "Правило штрафа: ожидается объект с полем per_day")
+    try:
+        per_day = float(raw.get("per_day") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "Правило штрафа: сколько снимать за сутки — это число") from None
+    if per_day <= 0:
+        raise HTTPException(422, "Правило штрафа: укажите, сколько снимать за сутки")
+    if str(raw.get("unit") or "points") not in late_penalty.UNITS:
+        raise HTTPException(422, "Правило штрафа: единица — баллы или проценты")
+    if not late_penalty.parse_rule(raw):
+        raise HTTPException(422, "Правило штрафа заполнено неверно")
 
 
 def _assignment_or_404(db: Session, assignment_id: UUID) -> Assignment:

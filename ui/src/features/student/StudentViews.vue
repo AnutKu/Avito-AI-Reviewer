@@ -223,6 +223,7 @@ onUnmounted(() => {
     <template v-else-if="mode === 'result' && result">
       <button class="back" @click="emit('navigate', 'student-assignments')">← Все задания</button>
       <div class="result-hero"><div><span class="eyebrow">РАБОТА ПРОВЕРЕНА</span><h1>{{ result.submission.assignment }}</h1><p>Ревьюер подтвердил результат и опубликовал обратную связь</p></div><div class="big-score"><b>{{ result.review.final_score }}</b><small v-if="result.review.max_score != null">из {{ result.review.max_score }}</small></div></div>
+      <p v-if="result.review.late_penalty" class="penalty-note">⏱ {{ result.review.late_penalty_note }}. Балл по критериям — {{ Math.round((result.review.final_score + result.review.late_penalty) * 100) / 100 }}, за вычетом штрафа — {{ result.review.final_score }}.</p>
       <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b><MarkdownText inline :text="criterion.title" /></b><MarkdownText :text="criterion.comment" /></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2><MarkdownText :text="result.review.final_feedback" /><div class="human-note"><span>✓</span>Подтверждено ревьюером</div></aside></div>
     </template>
 

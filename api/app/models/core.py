@@ -175,6 +175,10 @@ class Review(Base):
     raw_result: Mapped[dict] = mapped_column(JSONB, default=dict)
     draft_feedback: Mapped[str] = mapped_column(Text, default="")
     final_score: Mapped[float | None] = mapped_column(Float)
+    # Сколько снято за просрочку и почему. Хранится отдельно от балла: иначе
+    # низкую оценку не отличить от оштрафованной — ни студенту, ни аналитике.
+    late_penalty: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    late_penalty_note: Mapped[str] = mapped_column(Text, default="")
     final_feedback: Mapped[str] = mapped_column(Text, default="")
     completed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -254,6 +254,10 @@ def review_data(review: Review, include_internal: bool = True) -> dict:
         "submission_id": str(review.submission_id),
         "ai_status": review.ai_status,
         "final_score": review.final_score,
+        # Штраф виден и студенту: оценка без объяснения, почему она такая, —
+        # это повод для спора, а не результат проверки.
+        "late_penalty": review.late_penalty or 0,
+        "late_penalty_note": review.late_penalty_note or "",
         "max_score": review_max_score(review),
         "final_feedback": review.final_feedback,
         "completed_at": iso(review.completed_at),
