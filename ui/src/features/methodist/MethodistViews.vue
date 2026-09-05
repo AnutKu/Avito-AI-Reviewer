@@ -5,6 +5,7 @@ import { useLiveRefresh } from '../../shared/live'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 import { debtEmptyState, debtFace, debtLink } from '../../shared/taskbank'
+import { effort as loadEffort, fill as loadFill, works as loadWorks } from '../../shared/reviewerLoad'
 import TaskBank from './TaskBank.vue'
 
 const props = defineProps({ active: String, sub: { type: Array, default: () => [] } })
@@ -293,7 +294,7 @@ onMounted(load)
         </article>
         <article class="card">
           <div class="card-title"><div><h2>Нагрузка ревьюеров</h2><p>Активные работы и свободный лимит</p></div></div>
-          <div v-for="person in report.reviewers" :key="person.id" class="reviewer-load"><span class="avatar purple">{{ initials(person.name) }}</span><div><b>{{ person.name }}</b><span><i :style="`width:${Math.min(100, person.load / person.capacity * 100)}%`" /></span></div><em>{{ person.load }} / {{ person.capacity }}</em></div>
+          <div v-for="person in report.reviewers" :key="person.id" class="reviewer-load"><span class="avatar purple">{{ initials(person.name) }}</span><div><b>{{ person.name }}</b><span><i :style="`width:${loadFill(person)}%`" /></span></div><em :title="`${loadEffort(person)} по трудоёмкости`">{{ loadWorks(person.active_count) }}</em></div>
           <div class="insight"><span>▲</span><p><b>Что видно по данным</b>{{ loadHint }}</p></div>
         </article>
     </div>
@@ -380,7 +381,7 @@ onMounted(load)
             <span>{{ hours(person.avg_review_hours) }}</span>
             <span>{{ pct(person.agreement) }}<small>{{ person.decided }} решений</small></span>
             <span>{{ pct(person.avg_percent) }}</span>
-            <span>{{ person.load }} / {{ person.capacity }}</span>
+            <span>{{ loadWorks(person.active_count) }}<small>{{ loadEffort(person) }} по трудоёмкости</small></span>
           </div>
         </div>
       </article>
@@ -457,10 +458,13 @@ onMounted(load)
       <input type="checkbox" :checked="autoAssign" @change="toggleAuto" />
       <span><b>Автоматическое распределение</b><small>Новые работы назначаются сразу при сдаче и при снятии ревьюера — без ручного подтверждения. Конкретную работу всё равно можно передать другому ревьюеру ниже.</small></span>
     </label>
-    <p class="cap-hint">ⓘ Максимум активных работ на одного ревьюера задаётся в <b>«Настройках курса»</b>.</p>
+    <!-- Подсказка отвечает на два вопроса, которые до этого приходилось
+         выяснять опытным путём: почему загрузка дробная и почему она не меняется
+         после передачи уже проверенной работы. -->
+    <p class="cap-hint">ⓘ Лимит считается по трудоёмкости заданий, а не по числу работ, — поэтому число дробное. Завершённые работы в загрузку не входят. Сам лимит задаётся в <b>«Настройках курса»</b>.</p>
     <div class="cap-strip">
       <div v-for="person in reviewerLoads" :key="person.id" class="cap-chip" :class="{ off: !person.available, full: isFull(person) }">
-        <b>{{ person.name }}</b><em>{{ person.load }}/{{ person.capacity }}</em>
+        <b>{{ person.name }}</b><em>{{ loadWorks(person.active_count) }} · {{ loadEffort(person) }}</em>
         <button class="text-button" @click="toggleAvailability(person)">{{ person.available ? 'снять' : 'вернуть' }}</button>
       </div>
     </div>
@@ -470,7 +474,7 @@ onMounted(load)
       <div class="table-row table-head"><span>Работа</span><span>Ревьюер</span><span>Почему</span><span /></div>
       <div v-for="row in distribution" :key="row.submission.id" class="table-row" :class="{ 'over-cap': row.over_capacity }">
         <span class="student-cell"><i>{{ initials(row.submission.student) }}</i><span><b>{{ row.submission.student }}</b><small>{{ row.submission.assignment }}</small></span></span>
-        <span><select v-model="row.chosen" class="rev-picker"><option value="">— не назначен —</option><option v-for="p in reviewerLoads" :key="p.id" :value="p.id" :disabled="!p.available">{{ p.name }} · {{ p.load }}/{{ p.capacity }}{{ p.available ? '' : ' · недоступен' }}</option></select></span>
+        <span><select v-model="row.chosen" class="rev-picker"><option value="">— не назначен —</option><option v-for="p in reviewerLoads" :key="p.id" :value="p.id" :disabled="!p.available">{{ p.name }} · {{ loadWorks(p.active_count) }} · {{ loadEffort(p) }}{{ p.available ? '' : ' · недоступен' }}</option></select></span>
         <span class="reason">{{ row.explanation }}</span>
         <button class="text-button" :disabled="!row.chosen" @click="assignRow(row)">назначить</button>
       </div>
@@ -484,7 +488,7 @@ onMounted(load)
         <div v-for="row in assignedRows" :key="row.submission.id" class="table-row">
           <span class="student-cell"><i>{{ initials(row.submission.student) }}</i><span><b>{{ row.submission.student }}</b><small>{{ row.submission.assignment }}</small></span></span>
           <span>
-            <select v-model="row.chosen" class="rev-picker"><option v-for="p in reviewerLoads" :key="p.id" :value="p.id" :disabled="!p.available">{{ p.name }} · {{ p.load }}/{{ p.capacity }}{{ p.available ? '' : ' · недоступен' }}</option></select>
+            <select v-model="row.chosen" class="rev-picker"><option v-for="p in reviewerLoads" :key="p.id" :value="p.id" :disabled="!p.available">{{ p.name }} · {{ loadWorks(p.active_count) }} · {{ loadEffort(p) }}{{ p.available ? '' : ' · недоступен' }}</option></select>
             <small v-if="row.status === 'in_review'" class="warn">на проверке — передача перезапустит ревью</small>
           </span>
           <button class="text-button" :disabled="row.chosen === row.reviewer.id" @click="reassignAssigned(row)">передать</button>
