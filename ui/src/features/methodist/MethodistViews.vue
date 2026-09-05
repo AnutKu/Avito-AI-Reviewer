@@ -330,12 +330,15 @@ onMounted(load)
       </div>
 
       <article class="card corrections">
-        <div class="card-title"><div><h2>Критерии с частыми правками</h2><p>Ревьюер меняет или отклоняет оценку AI — кандидаты на уточнение формулировки</p></div><span v-if="criteriaRows.length" class="warning-chip">! максимум {{ pct(criteriaRows[0].correction_rate) }}</span></div>
-        <div v-for="row in criteriaRows" :key="row.key" class="correction-row">
-          <b>{{ row.title }}</b>
+        <div class="card-title"><div><h2>Критерии с частыми правками</h2><p>Ревьюер меняет или отклоняет оценку AI — кандидаты на уточнение формулировки</p></div></div>
+        <div class="correction-row correction-head"><span>Критерий</span><span /><span>Правок</span><span>Основание</span><span /></div>
+        <div v-for="row in criteriaRows" :key="`${row.assignment_id}:${row.key}`" class="correction-row">
+          <b>{{ row.title }}<small>{{ row.assignment || 'задание не найдено' }}</small></b>
           <div><i :style="`width:${Math.max(2, row.correction_rate)}%`" /></div>
           <strong>{{ pct(row.correction_rate) }}</strong>
           <small>{{ row.reviews }} ревью · AI {{ score(row.avg_ai) }} → {{ score(row.avg_final) }}</small>
+          <button v-if="row.assignment_id" class="text-button" @click="$emit('navigate', `methodist-rubrics/${row.assignment_id}/criterion/${encodeURIComponent(row.key)}`)">посмотреть</button>
+          <span v-else />
         </div>
         <div v-if="!criteriaRows.length" class="empty-mini">Ревьюеры ещё не приняли ни одного решения по критериям.</div>
         <button v-if="report.quality.criteria.length > 8" class="text-button" @click="showAllCriteria = !showAllCriteria">{{ showAllCriteria ? 'свернуть' : `показать все · ${report.quality.criteria.length}` }}</button>

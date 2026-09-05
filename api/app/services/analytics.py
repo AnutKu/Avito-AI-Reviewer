@@ -349,16 +349,23 @@ def weekly(
     ]
 
 
-def criteria_report(items: list[ItemFact]) -> list[dict]:
-    """Критерии, которые ревьюеры правят чаще всего, — кандидаты на переформулировку."""
+def criteria_report(items: list[ItemFact], titles: dict[UUID, str] | None = None) -> list[dict]:
+    """Критерии, которые ревьюеры правят чаще всего, — кандидаты на переформулировку.
 
-    groups: dict[str, list[ItemFact]] = defaultdict(list)
+    Группировка по паре «задание + критерий», а не по одному ключу: ключи
+    слагаются из названий, и «выводы» встречаются в трёх заданиях сразу. Слитые
+    в одну строку, они давали усреднённое число, по которому нельзя ни понять,
+    что чинить, ни дойти до самого критерия.
+    """
+
+    titles = titles or {}
+    groups: dict[tuple[UUID | None, str], list[ItemFact]] = defaultdict(list)
     for item in items:
         if item.action in DECIDED_ACTIONS:
-            groups[item.criterion_key or item.criterion_title].append(item)
+            groups[(item.assignment_id, item.criterion_key or item.criterion_title)].append(item)
 
     rows = []
-    for key, group in groups.items():
+    for (assignment_id, key), group in groups.items():
         changed = sum(1 for item in group if item.action in CORRECTED_ACTIONS)
         finals = [item.final_score for item in group if item.final_score is not None]
         ai_scores = [item.ai_score for item in group if item.final_score is not None]
@@ -368,6 +375,8 @@ def criteria_report(items: list[ItemFact]) -> list[dict]:
             {
                 "key": key,
                 "title": group[0].criterion_title,
+                "assignment_id": str(assignment_id) if assignment_id else None,
+                "assignment": titles.get(assignment_id, ""),
                 "reviews": len(group),
                 "changed": sum(1 for item in group if item.action == ReviewerAction.CHANGED),
                 "rejected": sum(1 for item in group if item.action == ReviewerAction.REJECTED),
@@ -767,7 +776,7 @@ def course_report(
         report["quality"] = {
             "agreement": agreement(items),
             "weekly": weekly(works, items, now=now),
-            "criteria": criteria_report(items),
+            "criteria": criteria_report(items, {item.id: item.title for item in assignments}),
             "ai_runs": _ai_runs(works),
         }
     return report
