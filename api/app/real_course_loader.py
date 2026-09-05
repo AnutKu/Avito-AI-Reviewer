@@ -547,3 +547,64 @@ def restore(db: Session, *, keep_open: int = 3, now: datetime | None = None) -> 
 
 def is_loaded(db: Session) -> bool:
     return db.scalar(select(Course.id).where(Course.title == COURSE)) is not None
+
+
+def _demo_titles() -> set[str]:
+    from .seed import HISTORY_ASSIGNMENTS, LIVE_ASSIGNMENTS
+
+    return {spec["title"] for spec in (*HISTORY_ASSIGNMENTS, *LIVE_ASSIGNMENTS)}
+
+
+def demo_is_untouched(db: Session) -> bool:
+    """В базе только демо-курс и ничего, кроме им же созданных заданий.
+
+    Такой курс — целиком продукт сева, и заменить его настоящим можно без
+    потерь. Стоит методисту завести там своё задание, и это уже чужая работа:
+    вопрос о её судьбе решает человек, а не старт контейнера."""
+
+    from .seed import COURSE_TITLE
+
+    courses = list(db.scalars(select(Course)))
+    if len(courses) != 1 or courses[0].title != COURSE_TITLE:
+        return False
+    titles = set(db.scalars(select(Assignment.title).where(Assignment.course_id == courses[0].id)))
+    return titles <= _demo_titles()
+
+
+def prepare(db: Session, *, enabled: bool = True) -> dict:
+    """Что сделать с базой на старте. Решение возвращается, а не печатается.
+
+    Наполнение — та часть запуска, про которую сложнее всего понять, почему
+    «ничего не изменилось». Поэтому здесь не булев результат, а причина: её
+    печатает вызывающий, и по логу видно, что именно произошло и что делать
+    дальше."""
+
+    if not enabled:
+        return {"action": "skipped", "reason": "наполнение настоящим курсом выключено флагом"}
+    if not RESULTS.exists():
+        return {
+            "action": "skipped",
+            "reason": f"нет файла с разборами ({RESULTS}) — он не попал в образ?",
+        }
+    if is_loaded(db):
+        return {"action": "kept", "reason": "настоящий курс уже загружен"}
+
+    empty = db.scalar(select(Course.id).limit(1)) is None
+    if not empty and not demo_is_untouched(db):
+        return {
+            "action": "kept",
+            "reason": (
+                "в базе есть свой курс или задания, заведённые вручную — старт их не трогает. "
+                "Заменить настоящим курсом: "
+                "docker compose exec api python -m scripts.load_real_course --wipe --restore"
+            ),
+        }
+    if not empty:
+        # Демо-курс целиком создан севом: заменить его — не потеря данных.
+        wipe(db)
+    summary = restore(db)
+    return {
+        "action": "loaded",
+        "reason": "с нуля" if empty else "демонстрационный курс заменён настоящим",
+        **summary,
+    }

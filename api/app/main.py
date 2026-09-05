@@ -3,14 +3,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, text
+from sqlalchemy import text
 
 from .config import settings
 from .db import SessionLocal, engine
-from .models import Base, Course
+from .models import Base
 from .routers import auth, common, methodist, reviewer, student
-from .real_course_loader import RESULTS as REAL_COURSE_RESULTS
-from .real_course_loader import restore as restore_real_course
+from .real_course_loader import prepare as prepare_cabinet
 from .seed import seed_demo
 from .services.review_pipeline import recover_orphaned_detections, recover_orphaned_reviews
 from .services.task_ai import recover_orphaned_runs
@@ -49,29 +48,30 @@ _COLUMN_MIGRATIONS = (
 
 
 def _fill_empty_cabinet(db) -> None:
-    """Чем наполнить пустой кабинет на старте.
+    """Чем наполнить кабинет на старте — и почему именно этим.
 
-    По умолчанию — настоящим курсом: задания, критерии, работы студентов и
+    По умолчанию настоящим курсом: задания, критерии, работы студентов и
     дословные ответы модели лежат в репозитории (`api/data/real_course`), так
-    что на новой машине достаточно поднять контейнеры. Ключ к модели для этого
-    не нужен: разборы не пересчитываются, а читаются из файла.
+    что на новой машине достаточно поднять контейнеры. Ключ к модели не нужен —
+    разборы не пересчитываются, а читаются из файла.
 
-    Демонстрационный курс остаётся запасным вариантом — на случай, когда файла
-    с ответами нет (например, в тестах, которые поднимают чистую базу).
-    Непустую базу не трогает ни тот, ни другой: своё содержимое кабинета
-    старт перезаписывать не должен.
+    Решение всегда пишется в лог. «Ничего не изменилось после обновления» —
+    самый частый вопрос про этот кусок запуска, и отвечать на него, читая код
+    по серверам, не должно быть нужно.
     """
 
-    if not settings.real_course_on_start or not REAL_COURSE_RESULTS.exists():
-        seed_demo(db)
+    log = logging.getLogger("uvicorn.error")
+    outcome = prepare_cabinet(db, enabled=settings.real_course_on_start)
+    if outcome["action"] == "loaded":
+        log.info(
+            "курс из репозитория (%s): работ %s, разборов %s, закрыто %s",
+            outcome["reason"], outcome["works"], outcome["reviews"], outcome["closed"],
+        )
         return
-    if db.scalar(select(Course.id).limit(1)):
-        return
-    summary = restore_real_course(db)
-    logging.getLogger("uvicorn.error").info(
-        "загружен курс из репозитория: работ %s, разборов %s, закрыто %s",
-        summary["works"], summary["reviews"], summary["closed"],
-    )
+    log.info("курс из репозитория не загружен: %s", outcome["reason"])
+    # Демонстрационный сев остаётся запасным вариантом — он и сам не тронет
+    # базу, в которой уже есть чужой курс.
+    seed_demo(db)
 
 
 @asynccontextmanager
