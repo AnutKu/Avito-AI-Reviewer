@@ -108,19 +108,26 @@ def test_remove_reviewer_in_manual_mode_returns_proposals_without_applying(metho
 
 def test_manual_reassign_respects_capacity_unless_forced(methodist):
     course = methodist.get("/api/methodist/course").json()
-    methodist.patch(
-        "/api/methodist/course",
-        json={"reviewer_capacity": 1, "tone_of_voice": course["tone_of_voice"]},
-    )
+
+    def set_capacity(value: float) -> None:
+        methodist.patch(
+            "/api/methodist/course",
+            json={"reviewer_capacity": value, "tone_of_voice": course["tone_of_voice"]},
+        )
 
     waiting = _state(methodist)["waiting"]
     free_reviewer = next(r["reviewer"]["id"] for r in waiting if r["reviewer"])
     subs = [r["submission"]["id"] for r in waiting if r["reviewer"]]
     assert len(subs) >= 2
 
+    # Лимит выставляется в два приёма, а не сразу в единицу: у ревьюера
+    # демо-курса уже есть работы, и «свободных» среди них может не быть вовсе.
+    # Проверяется граница лимита, а не то, сколько работ раздал сев.
+    set_capacity(99)
     assert methodist.patch(
         f"/api/methodist/submissions/{subs[0]}/reviewer", json={"reviewer_id": free_reviewer}
     ).status_code == 200
+    set_capacity(1)
 
     blocked = methodist.patch(
         f"/api/methodist/submissions/{subs[1]}/reviewer", json={"reviewer_id": free_reviewer}

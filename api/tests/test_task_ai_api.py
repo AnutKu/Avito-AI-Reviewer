@@ -391,6 +391,7 @@ def test_draft_status_reports_while_generating(methodist, engine):
 
 
 def test_ready_draft_comes_back_as_a_preview(methodist, engine):
+    before = len(methodist.get("/api/methodist/assignments").json())
     body = methodist.get(
         "/api/methodist/assignments/draft-from-idea/engine-task-1?track=Аналитика&total_points=10"
     ).json()
@@ -399,7 +400,8 @@ def test_ready_draft_comes_back_as_a_preview(methodist, engine):
     assert draft["title"] == "Кейс по оттоку"
     assert draft["criteria"][0]["max_score"] == 6
     assert draft["authoring"]["topic"] == "Аналитика"
-    assert len(methodist.get("/api/methodist/assignments").json()) == 5, "предпросмотр ничего не создаёт"
+    after = len(methodist.get("/api/methodist/assignments").json())
+    assert after == before, "предпросмотр ничего не создаёт"
 
 
 def test_a_failed_generation_is_reported_not_swallowed(methodist, engine):
