@@ -11,6 +11,7 @@ from ..models import Notification, User
 from ..security import current_user
 from ..serializers import iso
 from ..services.ai_reviewer_client import AiReviewerClient
+from ..services.deadline_notifications import sync_deadline_notifications
 
 router = APIRouter(tags=["common"])
 
@@ -28,6 +29,10 @@ def config() -> dict:
 
 @router.get("/notifications")
 def notifications(user: User = Depends(current_user), db: Session = Depends(get_db)) -> list[dict]:
+    # Напоминания о сроках дописываются здесь, а не по расписанию: воркера в
+    # кабинете нет, а список уведомлений и так запрашивается при каждом входе.
+    # Повторов это не создаёт — сборка идемпотентна по ключу в payload.
+    sync_deadline_notifications(db, user)
     rows = db.scalars(
         select(Notification)
         .where(Notification.recipient_id == user.id)

@@ -5,8 +5,12 @@ import { reviewTotals } from '../../shared/score'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
-const props = defineProps({ active: String })
+const props = defineProps({ active: String, sub: { type: Array, default: () => [] } })
 const emit = defineEmits(['navigate'])
+// Открытая работа живёт в адресе: «назад» из разбора обязан вести в очередь,
+// а F5 на разборе — открывать ту же работу, а не пустой экран.
+const REVIEW = 'reviewer-review'
+const openedId = computed(() => (props.active === REVIEW ? props.sub[0] || '' : ''))
 const queue = ref([])
 const history = ref([])
 const current = ref(null)
@@ -14,6 +18,7 @@ const error = ref('')
 const notice = ref('')
 const feedback = ref('')
 const loading = ref(true)
+const loadingReview = ref(false)
 const showAllQueue = ref(false)
 
 // По умолчанию в очереди — работы, которые ждут действия ревьюера.
@@ -73,7 +78,13 @@ async function loadHistory() {
   catch (e) { error.value = e.message }
 }
 
-async function openReview(id) {
+const openReview = (id) => emit('navigate', `${REVIEW}/${id}`)
+
+async function loadReview(id) {
+  current.value = null
+  // Пока работа грузится, экран не должен говорить «выберите работу из
+  // очереди»: она выбрана, её открывают.
+  loadingReview.value = true
   try {
     current.value = await api(`/reviewer/submissions/${id}/review`)
     feedback.value = current.value.review.draft_feedback
@@ -83,8 +94,8 @@ async function openReview(id) {
     picked.value = Object.fromEntries((current.value.blitz_draft?.questions || []).map(q => [q.id, true]))
     fraudVerdict.value = ''
     fraudRationale.value = ''
-    emit('navigate', 'reviewer-review')
   } catch (e) { error.value = e.message }
+  finally { loadingReview.value = false }
 }
 
 async function decideItem(item, action) {
@@ -264,8 +275,13 @@ watch(() => props.active, value => {
   if (value === 'reviewer-queue') loadQueue()
   if (value === 'reviewer-history') loadHistory()
 })
+// Переход между работами разделом не считается: из очереди в разбор и обратно
+// раздел меняется, а с одной работы на другую — только адрес.
+watch(openedId, id => { if (id) loadReview(id); else current.value = null })
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  if (openedId.value) return loadReview(openedId.value)
   props.active === 'reviewer-history' ? loadHistory() : loadQueue()
 })
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
@@ -489,7 +505,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     </div>
   </section>
 
+  <section v-else-if="active === 'reviewer-review' && loadingReview" class="empty-state"><span>⌁</span><h2>Открываем работу…</h2></section>
+
   <!-- Открытой работы нет. Пункта «Ревью» в меню больше нет, но по прямой
        ссылке или после перезагрузки страницы сюда ещё можно попасть. -->
-  <section v-else-if="active === 'reviewer-review'" class="empty-state"><span>⌁</span><h2>Выберите работу из очереди</h2><button class="primary" @click="emit('navigate', 'reviewer-queue')">Открыть очередь</button></section>
+  <section v-else-if="active === 'reviewer-review'" class="empty-state"><span>⌁</span><h2>{{ error ? 'Работа не открылась' : 'Выберите работу из очереди' }}</h2><button class="primary" @click="emit('navigate', 'reviewer-queue')">Открыть очередь</button></section>
 </template>

@@ -19,7 +19,7 @@ const error = ref('')
 const allNav = {
   student: [
     { id: 'student-assignments', label: 'Мои задания', icon: '▦' },
-    { id: 'student-blitz', label: 'Доп. вопросы', icon: '?' },
+    { id: 'student-blitz', label: 'Вопросы от ревьюера', icon: '?' },
   ],
   reviewer: [
     // Разбор работы — не отдельный раздел, а страница внутри очереди: открывают
@@ -96,8 +96,8 @@ onUnmounted(() => window.removeEventListener('hashchange', applyHash))
 <template>
   <LoginView v-if="!user" :loading="loading" :error="error" @login="login" />
   <AppShell v-else :user="user" :nav="nav" :active="active" :notifications="notifications" @navigate="navigate" @logout="logout" @read="readNotification">
-    <StudentViews v-if="user.role === 'student'" :active="active" />
-    <ReviewerViews v-else-if="user.role === 'reviewer'" :active="active" @navigate="navigate" />
+    <StudentViews v-if="user.role === 'student'" :active="active" :sub="sub" @navigate="navigate" />
+    <ReviewerViews v-else-if="user.role === 'reviewer'" :active="active" :sub="sub" @navigate="navigate" />
     <MethodistViews v-else :active="active" :sub="sub" @navigate="navigate" />
   </AppShell>
 </template>

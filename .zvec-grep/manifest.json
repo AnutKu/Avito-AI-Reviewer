@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 1,
+  "id": "25146cab-7163-4c49-8a8f-c676888c6892",
+  "name": "Avito-AI-Reviewer",
+  "path": "/Users/fef2/Desktop/Avito-AI-Reviewer/.zvec-grep",
+  "rootPaths": [
+    {
+      "absolutePath": "/Users/fef2/Desktop/Avito-AI-Reviewer",
+      "recursive": true
+    }
+  ],
+  "indexPolicy": "enabled",
+  "embedding": {
+    "provider": "local",
+    "model": "embeddinggemma-300m",
+    "dimension": 768,
+    "metric": "cosine"
+  },
+  "indexVersion": 1,
+  "createdTime": 1788596939951,
+  "updatedTime": 1788598871710,
+  "embeddingRuntime": {
+    "device": "auto"
+  }
+}
