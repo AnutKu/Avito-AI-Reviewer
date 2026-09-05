@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
+import { useLiveRefresh } from '../../shared/live'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 import { debtEmptyState, debtFace, debtLink } from '../../shared/taskbank'
@@ -25,8 +26,10 @@ const error = ref('')
 const notice = ref('')
 const statusFilter = ref('')
 
-async function load(active = props.active) {
-  error.value = ''
+// `silent` — обновление по таймеру: экран уже показан, и ни гасить его, ни
+// писать на нём ошибку из-за одной неудачной фоновой попытки не нужно.
+async function load(active = props.active, { silent = false } = {}) {
+  if (!silent) error.value = ''
   try {
     if (active === 'methodist-dashboard') {
       report.value = await api('/methodist/analytics')
@@ -46,8 +49,18 @@ async function load(active = props.active) {
       assignedRows.value = s.assigned.map(r => ({ ...r, chosen: r.reviewer.id }))
     }
     if (active === 'methodist-settings') course.value = await api('/methodist/course')
-  } catch (e) { error.value = e.message }
+  } catch (e) { if (!silent) error.value = e.message }
 }
+
+// В реестре работ стоит колонка «AI»: передали работу другому ревьюеру —
+// проверка началась заново, и до этой правки колонка показывала «running» до
+// перезагрузки. Пока хоть один разбор идёт, реестр обновляется сам.
+const AI_IN_FLIGHT = ['pending', 'running']
+useLiveRefresh(
+  () => props.active === 'methodist-performance'
+    && registry.value.some(group => (group.rows || []).some(row => AI_IN_FLIGHT.includes(row.ai_status))),
+  () => load('methodist-performance', { silent: true }),
+)
 
 // Список длинный, а разбирают его сверху вниз: показываем первые и даём
 // раскрыть остальное — как у критериев с правками рядом.

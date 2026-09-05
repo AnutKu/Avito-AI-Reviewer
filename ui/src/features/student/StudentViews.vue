@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, formatDate } from '../../shared/api'
+import { HUMAN_TICK, useLiveRefresh } from '../../shared/live'
 import { nearestDeadline, orderAssignments } from '../../shared/student'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
@@ -37,13 +38,16 @@ const mode = computed(() => {
   return result.value ? 'result' : detail.value ? 'detail' : 'loading'
 })
 
-async function loadAssignments() {
-  loading.value = true
+// `silent` — обновление по таймеру, а не по действию студента: список уже на
+// экране, скелетон на нём мигать не должен, а одна неудачная фоновая попытка
+// не повод писать ошибку — следующий тик попробует снова.
+async function loadAssignments({ silent = false } = {}) {
+  if (!silent) loading.value = true
   try {
     assignments.value = await api('/student/assignments')
     now.value = Date.now()
   }
-  catch (e) { error.value = e.message }
+  catch (e) { if (!silent) error.value = e.message }
   finally { loading.value = false }
 }
 
@@ -52,20 +56,43 @@ const openAssignment = (item) => emit('navigate', `${ROOT}/${item.id}`)
 // Что показать по адресу, решает сама работа, а не список: по прямой ссылке
 // список может быть ещё не загружен, а ответ по заданию уже говорит, сдано оно
 // или проверено.
-async function openRoute(id) {
-  detail.value = null
-  result.value = null
+async function openRoute(id, { silent = false } = {}) {
+  // Молчаливое обновление не гасит экран: карточка остаётся на месте, пока не
+  // придёт новая. Иначе раз в полминуты она моргала бы скелетоном сама по себе.
+  if (!silent) {
+    detail.value = null
+    result.value = null
+    error.value = ''
+  }
   if (!id) return
-  error.value = ''
   try {
     const assignment = await api(`/student/assignments/${id}`)
     if (assignment.submission?.status === 'completed') {
       result.value = await api(`/student/submissions/${assignment.submission.id}/result`)
+      detail.value = null
     } else {
       detail.value = assignment
     }
-  } catch (e) { error.value = e.message }
+  } catch (e) { if (!silent) error.value = e.message }
 }
+
+// Ждём человека, а не машину: ревьюер публикует результат и присылает вопросы
+// тогда, когда дойдёт, — опрашивать это по-машинному часто незачем. Но и до
+// F5 откладывать нельзя: студент сидит на своей же работе и должен увидеть,
+// что её проверили.
+useLiveRefresh(
+  () => props.active === ROOT && assignments.value.some(item => item.submission && item.submission.status !== 'completed'),
+  () => loadAssignments({ silent: true }),
+  { interval: HUMAN_TICK },
+)
+
+// Открытая работа: сдана, но ещё не проверена. Как только результат опубликуют,
+// экран сам перейдёт с карточки задания на разбор.
+useLiveRefresh(
+  () => Boolean(openedId.value) && Boolean(detail.value?.submission) && !result.value,
+  () => openRoute(openedId.value, { silent: true }),
+  { interval: HUMAN_TICK },
+)
 
 // Отправка идёт через состояние кнопки, а не молча: работа сдаётся один раз, и
 // студенту нужно видеть, что нажатие поймано, дошло и закончилось успехом.
@@ -143,6 +170,16 @@ async function loadBlitz() {
     events.value = {}
   } catch (e) { error.value = e.message }
 }
+
+// Вопросы приходят от ревьюера, и до этой правки студент узнавал о них только
+// перезагрузкой. Опрос идёт, ПОКА вопросов нет, и прекращается, как только они
+// пришли: loadBlitz заново ставит openedAt и стирает собранные события, и
+// сделать это под руками отвечающего значило бы потерять его же телеметрию.
+useLiveRefresh(
+  () => props.active === 'student-blitz' && !blitz.value.length,
+  loadBlitz,
+  { interval: HUMAN_TICK },
+)
 
 async function sendAnswers(session) {
   const payload = session.questions.map(q => ({ question_id: q.id, text: answers.value[q.id] || '' }))
@@ -223,7 +260,15 @@ onUnmounted(() => {
     <template v-else-if="mode === 'result' && result">
       <button class="back" @click="emit('navigate', 'student-assignments')">← Все задания</button>
       <div class="result-hero"><div><span class="eyebrow">РАБОТА ПРОВЕРЕНА</span><h1>{{ result.submission.assignment }}</h1><p>Ревьюер подтвердил результат и опубликовал обратную связь</p></div><div class="big-score"><b>{{ result.review.final_score }}</b><small v-if="result.review.max_score != null">из {{ result.review.max_score }}</small></div></div>
-      <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b><MarkdownText inline :text="criterion.title" /></b><MarkdownText :text="criterion.comment" /></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2><MarkdownText :text="result.review.final_feedback" /><div class="human-note"><span>✓</span>Подтверждено ревьюером</div></aside></div>
+      <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b><MarkdownText inline :text="criterion.title" /></b><MarkdownText :text="criterion.comment" /></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2>
+        <!-- Плашки «подтверждено ревьюером» здесь больше нет. Этот экран
+             открывается только у проверенной работы, то есть её подтвердили
+             всегда: флаг не мог быть выключен ни при каких условиях и лишь
+             намекал на несуществующее состояние «не подтверждено». Вместо него
+             стоит то, что действительно бывает разным, — когда опубликовали. -->
+        <MarkdownText v-if="result.review.final_feedback" :text="result.review.final_feedback" />
+        <p v-else class="feedback-empty">Ревьюер не оставил общего комментария — смотрите разбор по критериям слева.</p>
+        <small v-if="result.review.completed_at" class="feedback-published">Опубликовано {{ formatDate(result.review.completed_at, true) }}</small></aside></div>
     </template>
 
     <!-- Работа по адресу ещё грузится. Кнопка «назад» здесь не для красоты:

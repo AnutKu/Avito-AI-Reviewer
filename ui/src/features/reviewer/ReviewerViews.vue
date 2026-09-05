@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { aiStatusNames, api, formatDate } from '../../shared/api'
+import { useLiveRefresh } from '../../shared/live'
 import { reviewTotals } from '../../shared/score'
 import { evidenceLink } from '../../shared/sourceLink'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
@@ -61,8 +62,10 @@ const visibleQueue = computed(() =>
     .sort(QUEUE_SORTS[sortBy.value].compare),
 )
 
-async function loadQueue() {
-  loading.value = true
+// `silent` — обновление по таймеру, а не по действию человека. Скелетон на нём
+// не показывается: список уже на экране, и мигать он не должен.
+async function loadQueue({ silent = false } = {}) {
+  if (!silent) loading.value = true
   try {
     queue.value = await api('/reviewer/queue')
     // Работу могли завершить или передать другому — фильтр по ней остался бы
@@ -70,7 +73,9 @@ async function loadQueue() {
     if (!assignmentOptions.value.includes(assignmentFilter.value)) assignmentFilter.value = ''
     if (!studentOptions.value.includes(studentFilter.value)) studentFilter.value = ''
   }
-  catch (e) { error.value = e.message }
+  // Молчаливый тик и молчит: одна неудачная фоновая попытка не повод писать
+  // ревьюеру ошибку поверх работающего экрана — следующий тик попробует снова.
+  catch (e) { if (!silent) error.value = e.message }
   finally { loading.value = false }
 }
 
@@ -90,7 +95,11 @@ async function loadReview(id) {
   loadingReview.value = true
   try {
     current.value = await api(`/reviewer/submissions/${id}/review`)
-    feedback.value = current.value.review.draft_feedback
+    // Опубликованный текст, а если работа ещё не закрыта — черновик AI. Тут
+    // стоял только черновик: открыв завершённую работу, ревьюер видел в
+    // редакторе предложение модели и считал его тем, что ушло студенту, — а
+    // ушла его собственная правка, которой на экране не было.
+    feedback.value = current.value.review.final_feedback || current.value.review.draft_feedback
     current.value.review.items.forEach(item => { item.editScore = item.final_score ?? item.ai_score; item.editComment = item.reviewer_comment })
     // Черновик мог остаться с прошлого захода: без этого он бы показался с
     // пустыми галочками, и «Отправить» ругалось бы на пустой выбор.
@@ -140,23 +149,57 @@ async function rewrite() {
   } catch (e) { error.value = e.message }
 }
 
+// Стадии, которые считает машина: пока разбор или детекция в этих статусах,
+// экран обязан догонять их сам.
+const AI_IN_FLIGHT = ['pending', 'running']
+const isPending = (status) => AI_IN_FLIGHT.includes(status)
+
+// Разбор Z.AI и детекция приходят фоновыми задачами. Раньше их ждал цикл в
+// rerun() на 60 попыток — и только он: работа, открытая, пока разбор ещё шёл,
+// показывала «Проверка выполняется…» до перезагрузки, а перезапуск детекции не
+// обновлял экран вовсе. Условие ожидания одно на обе стадии и живёт здесь.
+const machineWorking = computed(() =>
+  Boolean(current.value)
+  && (isPending(current.value.review?.ai_status) || isPending(current.value.detection?.status)),
+)
+
+async function syncReview() {
+  if (!current.value) return
+  const fresh = await api(`/reviewer/submissions/${current.value.submission.id}/review`)
+  // Детекция и блиц идут отдельными полями — их можно заменить целиком, не
+  // трогая ничего из того, что ревьюер успел набрать.
+  current.value.detection = fresh.detection
+  current.value.blitz = fresh.blitz
+  current.value.review.signals = fresh.review.signals
+  if (!isPending(current.value.review.ai_status)) return
+  current.value.review.ai_status = fresh.review.ai_status
+  current.value.review.ai_error = fresh.review.ai_error
+  if (isPending(fresh.review.ai_status)) return
+  // Разбор доехал. Ответ берётся целиком: критериев на экране до этого не было,
+  // решений по ним ревьюер принять не мог, и терять тут нечего.
+  current.value.review = fresh.review
+  feedback.value = fresh.review.final_feedback || fresh.review.draft_feedback
+  fresh.review.items.forEach(item => { item.editScore = item.final_score ?? item.ai_score; item.editComment = item.reviewer_comment })
+  notice.value = fresh.review.ai_status === 'ready' ? 'Проверка Z.AI готова' : ''
+  if (fresh.review.ai_status === 'failed') error.value = fresh.review.ai_error || 'Проверка Z.AI завершилась ошибкой'
+}
+
+useLiveRefresh(() => machineWorking.value, syncReview)
+
+// Очередь показывает статус разбора по каждой работе: пока хоть один идёт,
+// список обновляется сам, иначе не опрашивается вовсе.
+useLiveRefresh(
+  () => props.active === 'reviewer-queue' && queue.value.some(row => isPending(row.ai_status)),
+  () => loadQueue({ silent: true }),
+)
+
 async function rerun() {
   try {
     await api(`/reviewer/reviews/${current.value.review.id}/rerun`, { method: 'POST' })
+    // Дальше экран ведёт useLiveRefresh: статус running включает опрос, готовый
+    // разбор его выключает. Ждать здесь больше нечем и незачем.
     current.value.review.ai_status = 'running'
     notice.value = 'Z.AI начал повторную проверку'
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      const updated = await api(`/reviewer/submissions/${current.value.submission.id}/review`)
-      current.value = updated
-      if (updated.review.ai_status !== 'running' && updated.review.ai_status !== 'pending') {
-        feedback.value = updated.review.draft_feedback
-        updated.review.items.forEach(item => { item.editScore = item.final_score ?? item.ai_score; item.editComment = item.reviewer_comment })
-        notice.value = updated.review.ai_status === 'ready' ? 'Проверка Z.AI готова' : ''
-        if (updated.review.ai_status === 'failed') error.value = updated.review.ai_error || 'Проверка Z.AI завершилась ошибкой'
-        break
-      }
-    }
   } catch (e) { error.value = e.message }
 }
 
@@ -281,6 +324,11 @@ async function complete() {
     const result = await api(`/reviewer/reviews/${current.value.review.id}/complete`, { method: 'POST', body: JSON.stringify({ feedback: feedback.value }) })
     notice.value = `Ревью опубликовано · ${result.score}${result.max_score != null ? ` из ${result.max_score}` : ''}`
     current.value.submission.status = 'completed'
+    // Что опубликовали, то и лежит в ревью. Без этой строки местное состояние
+    // расходилось с сервером сразу после публикации: на экране черновик, у
+    // студента — отправленный текст.
+    current.value.review.final_feedback = feedback.value
+    current.value.review.final_score = result.score
   } catch (e) { error.value = e.message }
 }
 

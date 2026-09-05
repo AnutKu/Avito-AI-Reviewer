@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, getToken, setToken } from '../shared/api'
+import { HUMAN_TICK, useLiveRefresh } from '../shared/live'
 import { parseHash } from '../shared/route'
 import AppShell from './AppShell.vue'
 import LoginView from '../features/auth/LoginView.vue'
@@ -83,6 +84,15 @@ function navigate(path) {
   else window.location.hash = target
 }
 function logout() { setToken(null); user.value = null; notifications.value = []; active.value = ''; sub.value = []; window.location.hash = '' }
+
+// Колокольчик грузился один раз за сессию: работа проверена, вопрос задан,
+// ревью назначено — а счётчик до перезагрузки показывал вчерашнее число.
+// Опрос идёт, пока в кабинете кто-то есть, и не идёт на экране логина.
+useLiveRefresh(
+  () => Boolean(user.value),
+  async () => { notifications.value = await api('/notifications') },
+  { interval: HUMAN_TICK },
+)
 async function readNotification(note) {
   if (!note.read) { await api(`/notifications/${note.id}/read`, { method: 'POST' }); note.read = true }
   const route = note.payload?.route?.split('/').filter(Boolean).join('-')
