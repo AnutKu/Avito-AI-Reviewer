@@ -49,6 +49,15 @@ async function load(active = props.active) {
   } catch (e) { error.value = e.message }
 }
 
+// Список длинный, а разбирают его сверху вниз: показываем первые и даём
+// раскрыть остальное — как у критериев с правками рядом.
+const DEBT_VISIBLE = 5
+const debtAll = ref(false)
+const debtShown = computed(() => {
+  const rows = report.value?.debt?.items || []
+  return debtAll.value ? rows : rows.slice(0, DEBT_VISIBLE)
+})
+
 const debtEmpty = computed(() => debtEmptyState(report.value?.debt))
 // Кэша у долга нет: цифры пересчитываются на каждую загрузку экрана. Показываем
 // момент расчёта — иначе непонятно, попала ли в них работа, проверенная минуту назад.
@@ -278,7 +287,6 @@ onMounted(load)
 
     <template v-if="report.debt">
       <h2 class="dist-subhead">Образовательный долг</h2>
-      <p class="cap-hint">ⓘ Где курс теряет качество — по накопленным работам, ревью и прогонам агентов. Учебных материалов и программы система не видит: она показывает признаки, а решение за вами.</p>
 
       <div v-if="debtEmpty" class="card debt-empty">
         <h3>{{ debtEmpty.title }}</h3>
@@ -292,7 +300,7 @@ onMounted(load)
           <button class="text-button" @click="load()">обновить</button>
         </div>
 
-        <article v-for="(row, i) in report.debt.items" :key="i" class="card debt-row">
+        <article v-for="(row, i) in debtShown" :key="i" class="card debt-row">
           <span class="debt-face">{{ debtFace(row.kind) }}</span>
           <div class="debt-body">
             <b class="debt-title">{{ row.title }}</b>
@@ -304,6 +312,10 @@ onMounted(load)
             </div>
           </div>
         </article>
+
+        <button v-if="report.debt.items.length > DEBT_VISIBLE" class="text-button" @click="debtAll = !debtAll">
+          {{ debtAll ? 'свернуть' : `показать все · ${report.debt.items.length}` }}
+        </button>
       </template>
     </template>
 

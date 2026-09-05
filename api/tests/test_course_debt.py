@@ -154,19 +154,21 @@ def test_agreement_is_not_a_debt():
 def test_a_task_that_needs_follow_up_questions_is_flagged():
     rows = question_hotspots({TASK_A: task(works=10, questioned=5)})
     assert len(rows) == 1 and rows[0]["kind"] == "questions"
-    assert "доп. вопросы по 5 работам" in rows[0]["evidence"]
+    assert "по 5 из 10 работ" in rows[0]["evidence"]
+    assert "отправлял" in rows[0]["detail"], "утверждается действие, а не догадка"
 
 
-def test_understanding_risk_counts_too():
-    rows = question_hotspots({TASK_A: task(works=10, risk_flagged=4)})
-    assert len(rows) == 1 and "риск непонимания у 4" in rows[0]["evidence"]
+def test_only_questions_actually_asked_count():
+    """`understanding_risk` — суждение AI о работе студента, а не о ясности
+    задания. Считать его «пришлось уточнять» значит утверждать то, чего никто
+    не делал: сигнал есть, а вопросов никто не задавал."""
+
+    assert question_hotspots({TASK_A: task(works=6, questioned=0)}) == []
 
 
-def test_the_two_question_signals_are_not_summed():
-    """Одна работа могла и получить блиц, и словить риск — это одна работа."""
-
-    rows = question_hotspots({TASK_A: task(works=10, questioned=4, risk_flagged=4)})
-    assert rows[0]["metric"] == 40, "берётся большее, а не сумма"
+def test_a_single_follow_up_is_not_a_pattern():
+    # 1 из 6 — это 17%, ниже порога: один уточняющий вопрос ещё ничего не значит.
+    assert question_hotspots({TASK_A: task(works=6, questioned=1)}) == []
 
 
 def test_a_task_with_few_works_is_not_judged():

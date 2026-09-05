@@ -22,8 +22,11 @@
 
 * «материалы, после которых растут вопросы» — учебных материалов кабинет не
   хранит и о лекциях ничего не знает. Зато он знает, после каких заданий
-  ревьюер чаще всего вынужден переспрашивать студента (блиц) и где AI отмечает
-  риск непонимания. Это и есть измеримая часть того же сигнала;
+  ревьюер реально отправлял студенту дополнительные вопросы. Это измеримая
+  часть того же сигнала — и только она: сигнал `understanding_risk` из AI-ревью
+  сюда НЕ входит, хотя соблазн был. Он говорит «похоже, студент не понимает,
+  что сдал» — это суждение о конкретной работе, а не о ясности задания, и
+  смешивать их значит выдавать за «пришлось уточнять» то, чего никто не делал;
 * «задания, не соответствующие программе» — программы у системы нет. Есть
   признаки того, что задание перестало работать: рубрику давно не трогали,
   прогон агентов оставил незакрытые критичные замечания, критерий перестал
@@ -43,7 +46,6 @@ from sqlalchemy.orm import Session
 from ..models import (
     AiRecommendation,
     AiRun,
-    AiSignal,
     Assignment,
     BlitzSession,
     Review,
@@ -86,8 +88,7 @@ class TaskFact:
     published_at: datetime | None
     rubric_updated_at: datetime | None
     works: int = 0
-    questioned: int = 0        # работ, по которым пришлось задать доп. вопросы
-    risk_flagged: int = 0      # работ, где AI отметил риск непонимания
+    questioned: int = 0        # работ, по которым ревьюер отправил доп. вопросы
     open_findings: int = 0     # незакрытые критичные рекомендации AI-прогона
     last_run_at: datetime | None = None
     criteria: list = field(default_factory=list)
@@ -247,33 +248,28 @@ def manual_corrections(
 
 
 def question_hotspots(tasks: dict[UUID, TaskFact]) -> list[dict]:
-    """Задания, после которых чаще всего приходится переспрашивать.
+    """Задания, после которых ревьюер вынужден переспрашивать студента.
 
-    Ближайшее, что кабинет знает о «материалах, после которых растут вопросы»:
-    доля работ, по которым ревьюер отправлял дополнительные вопросы или AI
-    отмечал риск непонимания. Учебных материалов система не хранит, и делать
-    вид, что она их анализирует, — значит выдумывать.
+    Считается по одному факту: отправленному блиц-опросу. Это действие живого
+    человека, и только оно даёт право написать «пришлось уточнять». Учебных
+    материалов система не хранит и анализировать их не может; это ближайшее,
+    что она о них знает.
     """
 
     rows = []
     for task in tasks.values():
-        if task.works < MIN_WORKS_PER_TOPIC:
+        if task.works < MIN_WORKS_PER_TOPIC or not task.questioned:
             continue
-        flagged = max(task.questioned, task.risk_flagged)
-        share = _pct(flagged, task.works)
+        share = _pct(task.questioned, task.works)
         if share < QUESTION_SHARE:
             continue
-        parts = []
-        if task.questioned:
-            parts.append(f"доп. вопросы по {task.questioned} работам")
-        if task.risk_flagged:
-            parts.append(f"риск непонимания у {task.risk_flagged}")
         rows.append(
             _item(
                 "questions",
-                title=f"«{task.title}» вызывает вопросы",
-                detail=f"По {round(share)}% работ пришлось уточнять, понял ли студент задание.",
-                evidence="; ".join(parts) + f" из {task.works} работ.",
+                title=f"«{task.title}»: студентов приходится переспрашивать",
+                detail=f"По {round(share)}% работ ревьюер отправлял студенту дополнительные "
+                "вопросы — обычно так делают, когда по решению неясно, понял ли студент задание.",
+                evidence=f"Дополнительные вопросы отправлены по {task.questioned} из {task.works} работ.",
                 action="Проверьте, что материалы перед этим заданием закрывают то, "
                 "что оно требует, и что условие не оставляет догадок.",
                 metric=round(share),
@@ -404,19 +400,6 @@ def collect_tasks(db: Session, assignments: list[Assignment]) -> dict[UUID, Task
             .group_by(Submission.assignment_id)
         ).all()
     )
-    risky = dict(
-        db.execute(
-            select(Submission.assignment_id, func.count(func.distinct(Submission.id)))
-            .join(Review, Review.submission_id == Submission.id)
-            .join(AiSignal, AiSignal.review_id == Review.id)
-            .where(
-                Submission.assignment_id.in_(ids),
-                AiSignal.kind == "understanding_risk",
-                AiSignal.level.in_(("high", "medium")),
-            )
-            .group_by(Submission.assignment_id)
-        ).all()
-    )
     findings = dict(
         db.execute(
             select(AiRun.assignment_id, func.count())
@@ -453,7 +436,6 @@ def collect_tasks(db: Session, assignments: list[Assignment]) -> dict[UUID, Task
             rubric_updated_at=rubric_at.get(assignment.id),
             works=works.get(assignment.id, 0),
             questioned=questioned.get(assignment.id, 0),
-            risk_flagged=risky.get(assignment.id, 0),
             open_findings=findings.get(assignment.id, 0),
             last_run_at=last_run.get(assignment.id),
         )
