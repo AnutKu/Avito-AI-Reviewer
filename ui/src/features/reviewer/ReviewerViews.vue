@@ -100,14 +100,29 @@ async function loadReview(id) {
   finally { loadingReview.value = false }
 }
 
+// Совпал ли балл в поле с оценкой AI. От этого зависит, какая из двух кнопок
+// активна: «Подтвердить» — когда подтверждать нечего кроме оценки AI,
+// «Изменить» — когда ревьюер вписал своё число. Раньше активны были обе, и
+// «Принять» отправляло ai_score поверх вписанного: правка пропадала молча, а
+// итог за работу не двигался — считать ему было нечего, final_score приходил
+// равным той же оценке AI.
+function isAiScore(item) {
+  return Number(item.editScore) === Number(item.ai_score)
+}
+
 async function decideItem(item, action) {
+  // «Подтвердить» сохраняет оценку AI, «Изменить» — то, что в поле. Число
+  // берётся здесь один раз: пусть кнопка и балл расходятся невозможным
+  // образом, а не тихо.
+  const score = action === 'accepted' ? Number(item.ai_score) : Number(item.editScore)
+  if (!Number.isFinite(score)) { error.value = 'Укажите балл по критерию'; return }
   try {
     await api(`/reviewer/review-items/${item.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ action, final_score: action === 'changed' ? Number(item.editScore) : null, comment: item.editComment || '' }),
+      body: JSON.stringify({ action, final_score: action === 'changed' ? score : null, comment: item.editComment || '' }),
     })
     item.reviewer_action = action
-    item.final_score = action === 'accepted' ? item.ai_score : action === 'rejected' ? 0 : Number(item.editScore)
+    item.final_score = score
     notice.value = 'Решение сохранено'
   } catch (e) { error.value = e.message }
 }
@@ -423,7 +438,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
         <!-- Критерии идут первыми: ревьюер пришёл выставить балл, а признаки
              использования AI на балл не влияют и стоят после решения по нему. -->
-        <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} утверждено</span></div>
+        <section class="review-section"><div class="section-title"><h2>Оценки по критериям</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} утверждено</span></div>
           <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">
             <header>
               <div>
@@ -433,7 +448,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                      противоречие. Уровень остаётся цветом, смысл — подписью. -->
                 <span class="ai-confidence" :class="item.confidence" :title="SCORE_CONFIDENCE_HINTS[item.confidence]"><i />уверенность AI в оценке критерия</span>
               </div>
-              <strong>{{ item.ai_score }} <small>/ {{ item.max_score }}</small></strong>
+              <!-- Действующий балл по критерию, а не оценка AI: после решения
+                   ревьюера в шапке карточки стояло старое число, и оно
+                   расходилось с итогом за работу, который считается по нему же. -->
+              <strong>{{ item.final_score ?? item.ai_score }} <small>/ {{ item.max_score }}</small></strong>
             </header>
             <MarkdownText :text="item.recommendation" />
             <template v-for="proof in evidenceRows(item.evidence)" :key="proof.quote">
@@ -446,7 +464,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                 <b>{{ level.points }}</b><span><i>{{ level.label }}</i><MarkdownText inline :text="level.descriptor" /></span>
               </div>
             </div>
-            <div v-if="item.reviewer_action === 'pending'" class="decision-box"><div class="edit-inline"><label>Ваш балл<input v-model="item.editScore" type="number" min="0" :max="item.max_score" step="0.5" /></label><label>Комментарий<input v-model="item.editComment" placeholder="Необязательно" /></label></div><div class="decision-actions"><button class="accept" @click="decideItem(item, 'accepted')">✓ Принять</button><button @click="decideItem(item, 'changed')">Изменить</button><button class="reject" @click="decideItem(item, 'rejected')">Отклонить</button></div></div>
+            <div v-if="item.reviewer_action === 'pending'" class="decision-box"><div class="edit-inline"><label>Ваш балл<input v-model="item.editScore" type="number" min="0" :max="item.max_score" step="0.5" /></label><label>Комментарий<input v-model="item.editComment" placeholder="Необязательно" /></label></div><div class="decision-actions"><button class="accept" :disabled="!isAiScore(item)" title="Согласиться с оценкой AI" @click="decideItem(item, 'accepted')">✓ Подтвердить</button><button :disabled="isAiScore(item)" title="Сохранить балл из поля «Ваш балл»" @click="decideItem(item, 'changed')">Изменить</button></div></div>
             <div v-else class="decision-done">✓ Решение: {{ { accepted: 'принято', changed: 'изменено', rejected: 'отклонено' }[item.reviewer_action] }} <button @click="item.reviewer_action = 'pending'">Изменить</button></div>
           </article>
         </section>
