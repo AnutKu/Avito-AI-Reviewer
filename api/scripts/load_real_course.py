@@ -55,6 +55,10 @@ from app.services.review_pipeline import run_review  # noqa: E402
 
 DATA = ROOT / "data" / "real_course"
 
+# Сколько отказов подряд считать признаком недоступного сервиса, а не плохих работ.
+MAX_FAILURES_IN_A_ROW = 3
+RETRY_PAUSE_SECONDS = 10
+
 COURSE = "Авито Академия: разбор реальных ДЗ"
 
 METHODIST = ("methodist@demo.local", "Анна Воронова")
@@ -281,8 +285,19 @@ def review_all(db) -> None:
         )
     )
     print(f"К проверке работ: {len(pending)}")
-    ok = failed = 0
+    ok = failed = streak = 0
     for number, review_id in enumerate(pending, 1):
+        # Подряд идущие отказы означают не плохие работы, а недоступный сервис
+        # (так и вышло: контейнеры перезапустились посреди прогона). Продолжать
+        # — значит за полминуты пометить все оставшиеся работы как «ошибка
+        # проверки» и потерять понимание, какие из них вообще пробовали.
+        if streak >= MAX_FAILURES_IN_A_ROW:
+            left = len(pending) - number + 1
+            print(
+                f"\n  Прервано: {streak} отказа подряд — похоже, сервис проверки недоступен."
+                f"\n  Не тронуто работ: {left}. Повторите ту же команду, когда сервис поднимется."
+            )
+            break
         started = time.monotonic()
         run_review(review_id)
         with SessionLocal() as fresh:
@@ -300,9 +315,18 @@ def review_all(db) -> None:
                 mark = f"{score:>5.1f} / {total:<4.0f}"
             else:
                 failed += 1
+                streak += 1
                 mark = f"  ошибка: {(review.ai_error or '')[:40]}"
-        print(f"  [{number:>2}/{len(pending)}] {time.monotonic() - started:5.1f}с "
-              f"{LEVEL_NAMES.get(level, level):<8} {mark}  {title}")
+            if review.ai_status == AiStatus.READY:
+                streak = 0
+        print(
+            f"  [{number:>2}/{len(pending)}] {time.monotonic() - started:5.1f}с "
+            f"{LEVEL_NAMES.get(level, level):<8} {mark}  {title}",
+            flush=True,
+        )
+        if streak:
+            # Дать сервису шанс подняться, прежде чем списывать следующую работу.
+            time.sleep(RETRY_PAUSE_SECONDS)
     print(f"\nПроверено: {ok}. С ошибкой: {failed}.")
 
 
