@@ -57,7 +57,19 @@ class SignalResult(StrictModel):
 class ReviewResult(StrictModel):
     summary: str = Field(min_length=1, max_length=4000)
     criteria: list[CriterionResult] = Field(min_length=1)
-    draft_feedback: str = Field(min_length=1, max_length=12000)
+    # Этот текст читает студент, и приходил он сплошным абзацем: ревьюер либо
+    # разбивал его руками, либо публиковал стену текста. Структура описана в
+    # контракте, а не только в промпте, — тогда она часть формы ответа.
+    draft_feedback: str = Field(
+        min_length=1,
+        max_length=12000,
+        description=(
+            "Готовый текст для студента с абзацами через пустую строку: короткий "
+            "абзац о том, что получилось; затем список '- ' с тем, что доработать, "
+            "по пункту на замечание; в конце абзац о следующем шаге. Без "
+            "заголовков, без баллов и без упоминаний AI."
+        ),
+    )
     signals: list[SignalResult] = Field(default_factory=list, max_length=2)
 
     @model_validator(mode="after")

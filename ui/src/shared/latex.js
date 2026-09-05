@@ -148,6 +148,40 @@ const INLINE_MATH = /\$([^$\n]+?)\$|\\\(([\s\S]+?)\\\)/g
 // Одиночные доллары в тексте — чаще цены, чем формулы: «$100 в месяц» формулой
 // не является. Признак настоящей формулы — команда или индекс внутри.
 const LOOKS_LIKE_MATH = /\\[A-Za-z]|[_^]/
+// Плюс одиночная латинская буква: «обозначим $x$» — это переменная, а не сумма
+// в долларах (в цене после знака идёт число). Доллары вокруг неё — разметка,
+// и на экране им делать нечего.
+const SINGLE_VARIABLE = /^[A-Za-z]$/
+
+const isMath = (body) => LOOKS_LIKE_MATH.test(body) || SINGLE_VARIABLE.test(body.trim())
+
+/**
+ * Строчные формулы. Обычным `replace` не обойтись: отвергнутая пара долларов
+ * («$100, а метрика $») съедала бы доллар, которым открывается настоящая
+ * формула следом. Поэтому после отказа поиск продолжается со ВТОРОГО доллара
+ * пары, а не за ней.
+ */
+function replaceInlineMath(text, wrap) {
+  const pattern = new RegExp(INLINE_MATH.source, 'g')
+  let out = ''
+  let tail = 0
+  let match = pattern.exec(text)
+  while (match) {
+    const [whole, dollars, parens] = match
+    if (dollars !== undefined && !isMath(dollars)) {
+      const resume = match.index + whole.length - 1
+      out += text.slice(tail, resume)
+      tail = resume
+      pattern.lastIndex = resume
+    } else {
+      out += text.slice(tail, match.index) + wrap(renderLatex(dollars ?? parens), false)
+      tail = match.index + whole.length
+      pattern.lastIndex = tail
+    }
+    match = pattern.exec(text)
+  }
+  return out + text.slice(tail)
+}
 
 /**
  * Заменяет формулы на результат `wrap(текст, выключная)`.
@@ -155,13 +189,8 @@ const LOOKS_LIKE_MATH = /\\[A-Za-z]|[_^]/
  * своих правил: `_` в индексе — не курсив, а `\frac{a}{b}` — не выделение.
  */
 export function replaceMath(text, wrap) {
-  return String(text ?? '')
-    .replace(BLOCK_MATH, (whole, dollars, brackets) =>
-      wrap(renderLatex(dollars ?? brackets), true),
-    )
-    .replace(INLINE_MATH, (whole, dollars, parens) => {
-      const body = dollars ?? parens
-      if (dollars !== undefined && !LOOKS_LIKE_MATH.test(dollars)) return whole
-      return wrap(renderLatex(body), false)
-    })
+  const blocks = String(text ?? '').replace(BLOCK_MATH, (whole, dollars, brackets) =>
+    wrap(renderLatex(dollars ?? brackets), true),
+  )
+  return replaceInlineMath(blocks, wrap)
 }

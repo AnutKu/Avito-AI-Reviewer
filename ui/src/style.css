@@ -371,6 +371,11 @@ h1, h2, h3, p { margin-top: 0; }
 .md blockquote { margin: 0 0 7px; padding: 4px 10px; border-left: 2px solid var(--line); color: var(--muted); }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 9px 0; }
 .md a { color: var(--blue); }
+/* Таблица от модели бывает шире панели ревьюера — прокручивается она, а не страница. */
+.md .md-table { overflow-x: auto; margin: 0 0 7px; }
+.md table { border-collapse: collapse; width: 100%; font-size: 0.95em; }
+.md th,.md td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+.md th { background: #f7f7f9; font-weight: 700; }
 /* Заголовок из markdown не занимает h1–h6: те принадлежат каркасу страницы. */
 .md .md-head { font-weight: 700; margin: 9px 0 4px; }
 .md .md-head[data-level="1"] { font-size: 1.15em; }
@@ -410,3 +415,30 @@ h1, h2, h3, p { margin-top: 0; }
    потому что общий `.criteria-table span` рисует нумерованный кружок. */
 .criteria-table .crit-levels { display: block; margin-top: 4px; }
 .criteria-table .crit-levels span { display: block; width: auto; height: auto; place-items: start; background: none; border-radius: 0; color: var(--muted); font-size: var(--fs-2xs); line-height: 1.5; }
+
+/* Уверенность AI в оценке критерия — светофор с подписью. Словом уровень
+   больше не пишется: «ВЫСОКАЯ» рядом с «0 / 2» читалось как оценка тяжести
+   замечания, а зелёный рядом с нулём — как противоречие. Цвет несёт уровень,
+   подпись называет величину целиком, title раскрывает уровень словами. */
+.ai-confidence { display: inline-flex; align-items: center; gap: 5px; margin-top: 5px; color: var(--muted); font-size: var(--fs-3xs); cursor: help; }
+.ai-confidence i { width: 8px; height: 8px; border-radius: 50%; background: #c9cad3; flex: none; }
+.ai-confidence.high i { background: #16a06a; }
+.ai-confidence.medium i { background: #e4a11b; }
+.ai-confidence.low i { background: #d3455b; }
+.review-item > header > div { min-width: 0; }
+.review-item > header h3 { margin: 0; }
+
+/* Цитата ведёт в исходник: место в файле ищется по снапшоту (shared/sourceLink.js),
+   и подпись показывает найденное «файл:строка», а не якорь модели словами. */
+a.evidence { text-decoration: none; color: inherit; }
+a.evidence:hover { background: #f0f1f5; }
+a.evidence:hover small { color: var(--blue); }
+.detection-body em a { color: var(--muted); text-decoration: none; font-style: normal; }
+.detection-body em a:hover { color: var(--blue); text-decoration: underline; }
+
+/* Обратная связь: поле правки и то, как текст увидит студент. Разметку видно
+   рядом с черновиком, чтобы слипшийся абзац замечался до публикации. */
+.feedback-preview-head { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.feedback-preview-head small { color: var(--muted); font-size: var(--fs-3xs); }
+.linklike { border: 0; background: none; padding: 0; color: var(--blue); cursor: pointer; font-size: var(--fs-2xs); }
+.feedback-preview { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 7px; background: #fbfbfc; color: #4d4f5b; font-size: var(--fs-2xs); line-height: 1.65; }

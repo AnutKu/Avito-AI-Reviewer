@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
+import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 import { debtEmptyState, debtFace, debtLink } from '../../shared/taskbank'
 import TaskBank from './TaskBank.vue'
@@ -333,7 +334,7 @@ onMounted(load)
         <div class="card-title"><div><h2>Критерии с частыми правками</h2><p>Ревьюер меняет или отклоняет оценку AI — кандидаты на уточнение формулировки</p></div></div>
         <div class="correction-row correction-head"><span>Критерий</span><span /><span>Правок</span><span>Основание</span><span /></div>
         <div v-for="row in criteriaRows" :key="`${row.assignment_id}:${row.key}`" class="correction-row">
-          <b>{{ row.title }}<small>{{ row.assignment || 'задание не найдено' }}</small></b>
+          <b><MarkdownText inline :text="row.title" /><small>{{ row.assignment || 'задание не найдено' }}</small></b>
           <div><i :style="`width:${Math.max(2, row.correction_rate)}%`" /></div>
           <strong>{{ pct(row.correction_rate) }}</strong>
           <small>{{ row.reviews }} ревью · AI {{ score(row.avg_ai) }} → {{ score(row.avg_final) }}</small>

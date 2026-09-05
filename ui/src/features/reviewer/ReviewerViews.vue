@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { aiStatusNames, api, formatDate } from '../../shared/api'
 import { reviewTotals } from '../../shared/score'
+import { evidenceLink } from '../../shared/sourceLink'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
@@ -82,6 +83,8 @@ const openReview = (id) => emit('navigate', `${REVIEW}/${id}`)
 
 async function loadReview(id) {
   current.value = null
+  // Снапшот другой — найденные по нему места больше ничего не значат.
+  proofCache = new Map()
   // Пока работа грузится, экран не должен говорить «выберите работу из
   // очереди»: она выбрана, её открывают.
   loadingReview.value = true
@@ -93,7 +96,6 @@ async function loadReview(id) {
     // пустыми галочками, и «Отправить» ругалось бы на пустой выбор.
     picked.value = Object.fromEntries((current.value.blitz_draft?.questions || []).map(q => [q.id, true]))
     fraudVerdict.value = ''
-    fraudRationale.value = ''
   } catch (e) { error.value = e.message }
   finally { loadingReview.value = false }
 }
@@ -155,6 +157,16 @@ const CONFIDENCE_TITLES = {
   low: 'Низкая — наблюдать почти нечего',
 }
 
+// Уверенность модели в оценке критерия — не важность замечания и не серьёзность
+// нарушения. Словом её больше не пишем: «ВЫСОКАЯ» рядом с «0 / 2» читалось как
+// оценка тяжести, а зелёный цвет рядом с нулём — как противоречие. Осталcя
+// светофор с подписью, которая называет величину целиком.
+const SCORE_CONFIDENCE_HINTS = {
+  high: 'Высокая: оценка опирается на прямо наблюдаемое в решении',
+  medium: 'Средняя: часть основания в решении не видна',
+  low: 'Низкая: наблюдать почти нечего, проверьте критерий сами',
+}
+
 async function rerunDetection() {
   try {
     await api(`/reviewer/reviews/${current.value.review.id}/detect`, { method: 'POST' })
@@ -188,7 +200,6 @@ const blitzCount = ref(5)
 const picked = ref({})
 const busyBlitz = ref(false)
 const fraudVerdict = ref('')
-const fraudRationale = ref('')
 
 function seconds(ms) { return Math.round((ms || 0) / 100) / 10 }
 
@@ -233,10 +244,9 @@ async function saveFraudDecision() {
   try {
     await api(`/reviewer/reviews/${current.value.review.id}/fraud-decision`, {
       method: 'POST',
-      body: JSON.stringify({ verdict: fraudVerdict.value, rationale: fraudRationale.value, blitz_id: current.value.blitz?.id || null }),
+      body: JSON.stringify({ verdict: fraudVerdict.value, blitz_id: current.value.blitz?.id || null }),
     })
     notice.value = 'Решение зафиксировано. На балл оно не влияет.'
-    fraudRationale.value = ''
     fraudVerdict.value = ''
     current.value = await api(`/reviewer/submissions/${current.value.submission.id}/review`)
   } catch (e) { error.value = e.message }
@@ -257,6 +267,53 @@ const totals = computed(() => reviewTotals(current.value?.review?.items))
 const totalMax = computed(() => current.value?.review?.max_score ?? totals.value.max_score ?? null)
 
 const snapshotFiles = computed(() => current.value?.snapshot?.parsed_facts?.files || [])
+
+// Цитата — это основание оценки, и проверять её ревьюер должен в исходнике, а
+// не глазами по снапшоту. Место ищется по тому же тексту, который читала
+// модель, поэтому ссылка ведёт ровно туда, откуда цитата взята.
+//
+// Кэш не для скорости поиска, а для числа поисков: шаблон спрашивает ссылку на
+// каждой перерисовке, а снапшот на открытой работе не меняется.
+let proofCache = new Map()
+
+function proofLink(quote) {
+  if (!proofCache.has(quote)) {
+    proofCache.set(
+      quote,
+      evidenceLink(current.value?.submission?.source_url, current.value?.snapshot?.content, quote),
+    )
+  }
+  return proofCache.get(quote)
+}
+
+/** Цитата, подпись и ссылка одной строкой — так они и стоят на экране. */
+function evidenceRows(evidence) {
+  return (evidence || []).map(proof => {
+    const link = proofLink(proof.quote)
+    return {
+      quote: proof.quote,
+      // Якорь модели — слова («Ячейка 12»). Он остаётся подписью, когда точное
+      // место в файле не нашлось: указание, где смотреть, всё равно есть.
+      label: link?.exact ? link.label : proof.anchor,
+      url: link?.url || '',
+    }
+  })
+}
+
+// Повод для доп. вопросов и решения по фроду — это сигнал, а не сам факт
+// проверки. Без сигнала спрашивать не о чем и решать нечего, поэтому оба блока
+// не показываются: пустая форма вердикта провоцирует его вынести.
+const hasAiSignal = computed(() => {
+  const detection = current.value?.detection
+  const overThreshold = Boolean(
+    detection?.reportable && detection.score >= detection.blitz_threshold,
+  )
+  return overThreshold || Boolean(current.value?.review?.signals?.length)
+})
+
+// Черновик ревьюер правит текстом, а студент читает разметкой. Пока их видно
+// рядом, «стена текста» замечается до публикации, а не после неё.
+const showFeedbackPreview = ref(true)
 
 // Условие и критерии — справочная панель поверх экрана проверки: свериться с
 // заданием нужно, не теряя разбор и несохранённые решения по критериям.
@@ -341,7 +398,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="score-total-value"><b>{{ totals.total ? totals.score : '—' }}</b><small v-if="totalMax != null">из {{ totalMax }}</small></div>
       <div class="score-total-meta">
         <b>{{ totals.total && !totals.pending ? 'Итоговый балл за работу' : 'Предварительный балл за работу' }}</b>
-        <small v-if="!totals.total">Разбора по критериям ещё нет — {{ aiStatusNames[current.review.ai_status] || current.review.ai_status }}.</small>
+        <small v-if="!totals.total">Ревью по критериям ещё нет — {{ aiStatusNames[current.review.ai_status] || current.review.ai_status }}.</small>
         <small v-else-if="totals.pending">Утверждено {{ totals.decided }} из {{ totals.total }} критериев. По остальным пока стоит оценка AI — она станет вашей, когда вы примете решение ниже.</small>
         <small v-else>Утверждены все {{ totals.total }} критериев. Публикация выставит студенту это число.</small>
         <div v-if="totals.total" class="score-total-bar"><i :style="{ width: `${Math.round((totals.decided / totals.total) * 100)}%` }" /></div>
@@ -350,8 +407,38 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     <div class="review-workspace">
       <article class="notebook-panel"><header><div class="file-tab" :title="snapshotFiles.join('\n')"><span>◇</span>{{ snapshotFiles[0] || 'Снапшот решения' }}<i v-if="snapshotFiles.length > 1">+{{ snapshotFiles.length - 1 }}</i></div><a :href="current.submission.source_url" target="_blank">GitHub ↗</a></header><pre>{{ current.snapshot.content }}</pre><footer><span>Снапшот сохранён {{ formatDate(current.snapshot.fetched_at, true) }}</span><span>Повторных запросов к GitHub нет</span></footer></article>
       <aside class="review-panel">
-        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РАЗБОР</span><b><MarkdownText v-if="current.review.summary" inline :text="current.review.summary" /><template v-else>{{ current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован' }}</template></b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
+        <div class="ai-summary"><span class="spark">✦</span><div><span class="eyebrow">AI-РЕВЬЮ</span><b><MarkdownText v-if="current.review.summary" inline :text="current.review.summary" /><template v-else>{{ current.review.ai_status === 'running' ? 'Проверка выполняется…' : 'Результат пока не сформирован' }}</template></b><small>Модель {{ current.review.model }}</small></div><button class="ai-rerun" :disabled="current.review.is_demo || current.review.ai_status === 'running' || current.submission.status === 'completed'" @click="rerun">↻ Перезапустить</button></div>
         <div v-if="current.review.ai_status === 'failed'" class="toast-error">Z.AI: {{ current.review.ai_error }}</div>
+
+        <!-- Критерии идут первыми: ревьюер пришёл выставить балл, а признаки
+             использования AI на балл не влияют и стоят после решения по нему. -->
+        <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} утверждено</span></div>
+          <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">
+            <header>
+              <div>
+                <h3><MarkdownText inline :text="item.criterion_title" /></h3>
+                <!-- Светофор без слова: словом эту величину путали с важностью
+                     замечания, а «ВЫСОКАЯ» рядом с «0 / 2» читалось как
+                     противоречие. Уровень остаётся цветом, смысл — подписью. -->
+                <span class="ai-confidence" :class="item.confidence" :title="SCORE_CONFIDENCE_HINTS[item.confidence]"><i />уверенность AI в оценке критерия</span>
+              </div>
+              <strong>{{ item.ai_score }} <small>/ {{ item.max_score }}</small></strong>
+            </header>
+            <MarkdownText :text="item.recommendation" />
+            <template v-for="proof in evidenceRows(item.evidence)" :key="proof.quote">
+              <a v-if="proof.url" class="evidence linked" :href="proof.url" target="_blank" rel="noopener noreferrer"><span>“</span><code>{{ proof.quote }}</code><small>{{ proof.label }} ↗</small></a>
+              <div v-else class="evidence"><span>“</span><code>{{ proof.quote }}</code><small>{{ proof.label }}</small></div>
+            </template>
+            <div v-if="item.levels?.length" class="levels">
+              <small>Что означает балл по этому критерию</small>
+              <div v-for="level in item.levels" :key="level.points" class="level-row" :class="{ picked: Number(level.points) === Number(item.final_score ?? item.ai_score) }">
+                <b>{{ level.points }}</b><span><i>{{ level.label }}</i><MarkdownText inline :text="level.descriptor" /></span>
+              </div>
+            </div>
+            <div v-if="item.reviewer_action === 'pending'" class="decision-box"><div class="edit-inline"><label>Ваш балл<input v-model="item.editScore" type="number" min="0" :max="item.max_score" step="0.5" /></label><label>Комментарий<input v-model="item.editComment" placeholder="Необязательно" /></label></div><div class="decision-actions"><button class="accept" @click="decideItem(item, 'accepted')">✓ Принять</button><button @click="decideItem(item, 'changed')">Изменить</button><button class="reject" @click="decideItem(item, 'rejected')">Отклонить</button></div></div>
+            <div v-else class="decision-done">✓ Решение: {{ { accepted: 'принято', changed: 'изменено', rejected: 'отклонено' }[item.reviewer_action] }} <button @click="item.reviewer_action = 'pending'">Изменить</button></div>
+          </article>
+        </section>
 
         <section v-if="current.detection" class="review-section detection-panel">
           <div class="section-title"><h2>Признаки использования AI</h2><span>На балл не влияет</span></div>
@@ -376,7 +463,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               <span class="detection-body">
                 <b>{{ item.title }}</b>
                 <small>вес {{ item.weight }} × величина {{ item.magnitude }}{{ item.direction > 0 ? '' : ' · свидетельство ручной работы' }}</small>
-                <em v-for="proof in item.evidence" :key="proof.quote">«{{ proof.quote }}» <i>{{ proof.anchor }}</i></em>
+                <em v-for="proof in evidenceRows(item.evidence)" :key="proof.quote">«{{ proof.quote }}»
+                  <a v-if="proof.url" :href="proof.url" target="_blank" rel="noopener noreferrer">{{ proof.label }} ↗</a>
+                  <i v-else>{{ proof.label }}</i>
+                </em>
               </span>
             </div>
             <div v-if="current.detection.reportable && current.detection.score >= current.detection.blitz_threshold" class="attention-panel">
@@ -386,22 +476,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <details v-if="current.detection.limitations"><summary>Ограничения метода</summary><MarkdownText :text="current.detection.limitations" /></details>
           </template>
         </section>
-        <section class="review-section"><div class="section-title"><h2>Критерии</h2><span>{{ current.review.items.filter(i => i.reviewer_action !== 'pending').length }} / {{ current.review.items.length }} утверждено</span></div>
-          <article v-for="item in current.review.items" :key="item.id" class="review-item" :class="`decision-${item.reviewer_action}`">
-            <header><div><span class="confidence" :class="item.confidence">{{ item.confidence === 'high' ? 'Высокая' : item.confidence === 'medium' ? 'Средняя' : 'Низкая' }}</span><h3>{{ item.criterion_title }}</h3></div><strong>{{ item.ai_score }} <small>/ {{ item.max_score }}</small></strong></header>
-            <MarkdownText :text="item.recommendation" /><div class="evidence" v-for="proof in item.evidence" :key="proof.quote"><span>“</span><code>{{ proof.quote }}</code><small>{{ proof.anchor }}</small></div>
-            <div v-if="item.levels?.length" class="levels">
-              <small>Что означает балл по этому критерию</small>
-              <div v-for="level in item.levels" :key="level.points" class="level-row" :class="{ picked: Number(level.points) === Number(item.final_score ?? item.ai_score) }">
-                <b>{{ level.points }}</b><span><i>{{ level.label }}</i>{{ level.descriptor }}</span>
-              </div>
-            </div>
-            <div v-if="item.reviewer_action === 'pending'" class="decision-box"><div class="edit-inline"><label>Ваш балл<input v-model="item.editScore" type="number" min="0" :max="item.max_score" step="0.5" /></label><label>Комментарий<input v-model="item.editComment" placeholder="Необязательно" /></label></div><div class="decision-actions"><button class="accept" @click="decideItem(item, 'accepted')">✓ Принять</button><button @click="decideItem(item, 'changed')">Изменить</button><button class="reject" @click="decideItem(item, 'rejected')">Отклонить</button></div></div>
-            <div v-else class="decision-done">✓ Решение: {{ { accepted: 'принято', changed: 'изменено', rejected: 'отклонено' }[item.reviewer_action] }} <button @click="item.reviewer_action = 'pending'">Изменить</button></div>
-          </article>
-        </section>
-        <section class="review-section"><div class="section-title"><h2>AI-сигнал</h2><span>Не влияет на балл</span></div><article v-for="signal in current.review.signals" :key="signal.id" class="signal-card"><header><span class="signal-icon">⌁</span><div><small>{{ signal.kind === 'ai_use' ? 'ВОЗМОЖНОЕ ИСПОЛЬЗОВАНИЕ AI' : 'РИСК ПОНИМАНИЯ' }}</small><h3><MarkdownText inline :text="signal.summary" /></h3></div><span class="confidence" :class="signal.level">{{ signal.level }}</span></header><ul><li v-for="ground in signal.grounds" :key="ground"><MarkdownText inline :text="ground" /></li></ul><details><summary>Ограничения метода</summary><MarkdownText :text="signal.limitations" /></details><div v-if="signal.reviewer_decision === 'pending'" class="decision-actions"><button class="accept" @click="decideSignal(signal, 'confirmed')">Подтвердить сигнал</button><button @click="decideSignal(signal, 'dismissed')">Отклонить</button></div><div v-else class="decision-done">Решение сохранено: {{ signal.reviewer_decision }}</div></article></section>
-        <section v-if="current.submission.status === 'in_review'" class="review-section">
+        <!-- Пустого заголовка тут больше нет: раз доп. вопросы появляются по
+             сигналу, секция без сигналов выглядела как сломанное условие. -->
+        <section v-if="current.review.signals?.length" class="review-section"><div class="section-title"><h2>AI-сигнал</h2><span>Не влияет на балл</span></div><article v-for="signal in current.review.signals" :key="signal.id" class="signal-card"><header><span class="signal-icon">⌁</span><div><small>{{ signal.kind === 'ai_use' ? 'ВОЗМОЖНОЕ ИСПОЛЬЗОВАНИЕ AI' : 'РИСК ПОНИМАНИЯ' }}</small><h3><MarkdownText inline :text="signal.summary" /></h3></div><span class="confidence" :class="signal.level">{{ signal.level }}</span></header><ul><li v-for="ground in signal.grounds" :key="ground"><MarkdownText inline :text="ground" /></li></ul><details><summary>Ограничения метода</summary><MarkdownText :text="signal.limitations" /></details><div v-if="signal.reviewer_decision === 'pending'" class="decision-actions"><button class="accept" @click="decideSignal(signal, 'confirmed')">Подтвердить сигнал</button><button @click="decideSignal(signal, 'dismissed')">Отклонить</button></div><div v-else class="decision-done">Решение сохранено: {{ signal.reviewer_decision }}</div></article></section>
+        <!-- Только когда есть сигнал: без него спрашивать не о чем, а форма,
+             стоящая на каждой работе, сама делает опрос рутиной. Начатый
+             черновик остаётся на экране, даже если сигнал успели снять. -->
+        <section v-if="current.submission.status === 'in_review' && (hasAiSignal || current.blitz_draft)" class="review-section">
           <div class="section-title"><h2>Дополнительные вопросы</h2><span>До 48 часов на ответ</span></div>
           <p class="muted">Вопросы составляются по этому решению — на них нельзя ответить, не открыв работу. Студент не увидит упоминаний AI-сигнала.</p>
           <div class="blitz-generate">
@@ -414,7 +495,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               <span>
                 <b><MarkdownText inline :text="question.text" /></b>
                 <small>{{ QUESTION_TYPES[question.type] || question.type }} · {{ question.anchor }}</small>
-                <em class="expected">Понимающий ответ покажет: {{ question.expected_points.join('; ') }}</em>
+                <em class="expected">Понимающий ответ покажет: <MarkdownText inline :text="question.expected_points.join('; ')" /></em>
               </span>
             </label>
             <p class="muted small">Подсказки «понимающий ответ покажет» студенту не отправляются.</p>
@@ -455,19 +536,31 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           </template>
         </section>
 
-        <section v-if="current.detection" class="review-section fraud-panel">
+        <!-- Тоже только по сигналу. Уже вынесенные решения показываются всегда:
+             история пересмотров не должна исчезать вместе с поводом. -->
+        <section v-if="current.detection && (hasAiSignal || current.fraud_decisions?.length)" class="review-section fraud-panel">
           <div class="section-title"><h2>Решение по AI-фроду</h2><span>На балл не влияет</span></div>
           <article v-for="row in current.fraud_decisions" :key="row.decided_at" class="decision-done block">
-            <b>{{ FRAUD_VERDICTS[row.verdict] }}</b><small>{{ formatDate(row.decided_at, true) }}</small><p>{{ row.rationale }}</p>
+            <b>{{ FRAUD_VERDICTS[row.verdict] }}</b><small>{{ formatDate(row.decided_at, true) }}</small><p v-if="row.rationale">{{ row.rationale }}</p>
           </article>
           <p class="muted">Решение принимаете вы. Индекс и ответы на вопросы — материал для него, а не он сам. Балл складывается из решений по критериям и от этого вердикта не зависит.</p>
           <div class="fraud-actions">
             <label v-for="(title, key) in FRAUD_VERDICTS" :key="key" class="fraud-option"><input v-model="fraudVerdict" type="radio" :value="key" />{{ title }}</label>
           </div>
-          <textarea v-model="fraudRationale" rows="3" placeholder="Обоснование: на что именно вы опирались (не менее 20 символов)" />
-          <button class="secondary full" :disabled="!fraudVerdict || fraudRationale.trim().length < 20" @click="saveFraudDecision">Зафиксировать решение</button>
+          <button class="secondary full" :disabled="!fraudVerdict" @click="saveFraudDecision">Зафиксировать решение</button>
         </section>
-        <section class="review-section feedback-editor"><div class="section-title"><h2>Обратная связь студенту</h2><span>Отправится только после подтверждения</span></div><textarea v-model="feedback" rows="7" /><div class="editor-actions"><button class="secondary" @click="rewrite">✦ Переформулировать</button><button class="primary" :disabled="current.submission.status === 'blitz_sent' || current.submission.status === 'completed'" @click="complete">Подтвердить и опубликовать</button></div></section>
+        <section class="review-section feedback-editor">
+          <div class="section-title"><h2>Обратная связь студенту</h2><span>Отправится только после подтверждения</span></div>
+          <textarea v-model="feedback" rows="14" spellcheck="true" placeholder="Что получилось, что доработать и почему. Абзацы разделяйте пустой строкой, перечисления — строками через «- »." />
+          <!-- Студент читает не поле ввода, а разметку. Показывать её рядом
+               дешевле, чем узнавать про слипшийся абзац после публикации. -->
+          <div class="feedback-preview-head">
+            <button class="linklike" @click="showFeedbackPreview = !showFeedbackPreview">{{ showFeedbackPreview ? 'Скрыть' : 'Показать' }} вид у студента</button>
+            <small>{{ feedback.trim() ? `${feedback.trim().length} символов` : 'черновик пуст' }}</small>
+          </div>
+          <MarkdownText v-if="showFeedbackPreview && feedback.trim()" class="feedback-preview" :text="feedback" />
+          <div class="editor-actions"><button class="secondary" @click="rewrite">✦ Переформулировать</button><button class="primary" :disabled="current.submission.status === 'blitz_sent' || current.submission.status === 'completed'" @click="complete">Подтвердить и опубликовать</button></div>
+        </section>
       </aside>
     </div>
 
@@ -491,11 +584,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         </div>
 
         <div v-else class="drawer-body">
-          <p class="muted">Полная рубрика с градацией по баллам. Она не зависит от AI-разбора: список доступен и до того, как разбор готов, и после утверждения оценок.</p>
+          <p class="muted">Полная рубрика с градацией по баллам. Она не зависит от AI-ревью: список доступен и до того, как ревью готово, и после утверждения оценок.</p>
           <article v-for="criterion in rubric" :key="criterion.key" class="drawer-criterion">
-            <header><b>{{ criterion.title }}</b><strong>{{ criterion.max_score }}</strong></header>
-            <p v-if="criterion.student_hint" class="muted">{{ criterion.student_hint }}</p>
-            <div v-for="level in criterion.levels || []" :key="level.points" class="level-row"><b>{{ level.points }}</b><span><i>{{ level.label }}</i>{{ level.descriptor }}</span></div>
+            <header><b><MarkdownText inline :text="criterion.title" /></b><strong>{{ criterion.max_score }}</strong></header>
+            <p v-if="criterion.student_hint" class="muted"><MarkdownText inline :text="criterion.student_hint" /></p>
+            <div v-for="level in criterion.levels || []" :key="level.points" class="level-row"><b>{{ level.points }}</b><span><i>{{ level.label }}</i><MarkdownText inline :text="level.descriptor" /></span></div>
             <p v-if="!criterion.levels?.length" class="muted small">Градация по баллам в рубрике не задана.</p>
           </article>
           <p v-if="!rubric.length" class="muted">Критерии к заданию не заведены.</p>

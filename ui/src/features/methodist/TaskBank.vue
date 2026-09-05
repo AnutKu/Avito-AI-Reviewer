@@ -792,11 +792,11 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 
     <template v-if="run.status === 'completed'">
       <article class="card" :class="run.summary?.verdict === 'ok' ? 'tb-ok' : 'tb-attention'">
-        <h2>{{ run.summary?.verdict === 'ok' ? '✓ ' : '⚠ ' }}{{ run.summary?.headline }}</h2>
+        <h2>{{ run.summary?.verdict === 'ok' ? '✓ ' : '⚠ ' }}<MarkdownText inline :text="run.summary?.headline || ''" /></h2>
         <p class="tb-what">{{ runIntro(run.persona_type) }}</p>
         <MarkdownText v-if="run.summary?.note" class="tb-what" :text="run.summary.note" />
         <div class="tb-counts">
-          <span><b>{{ run.summary?.good }}</b></span>
+          <span><b><MarkdownText inline :text="run.summary?.good || ''" /></b></span>
           <span v-if="run.summary?.counts?.critical"><em class="tb-sev high">критично</em> {{ run.summary.counts.critical }}</span>
           <span v-if="run.summary?.counts?.important"><em class="tb-sev medium">важно</em> {{ run.summary.counts.important }}</span>
           <span v-if="run.summary?.counts?.improvement"><em class="tb-sev low">улучшение</em> {{ run.summary.counts.improvement }}</span>
@@ -853,8 +853,8 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             <span class="tb-where">{{ rec.target_type === 'criterion' ? `критерий «${rec.target_id}»` : fieldTitle(rec.target_field) }}</span>
           </div>
           <MarkdownText class="tb-why" :text="rec.problem || kindWhy(rec.kind)" />
-          <p v-if="rec.expected_effect" class="tb-effect">→ {{ rec.expected_effect }}</p>
-          <details v-if="rec.evidence.length" class="tb-evidence"><summary>на чём основано</summary><p v-for="(e, i) in rec.evidence" :key="i">{{ e }}</p></details>
+          <p v-if="rec.expected_effect" class="tb-effect">→ <MarkdownText inline :text="rec.expected_effect" /></p>
+          <details v-if="rec.evidence.length" class="tb-evidence"><summary>на чём основано</summary><MarkdownText v-for="(e, i) in rec.evidence" :key="i" :text="e" /></details>
           <div v-if="rec.original_value || rec.proposed_value" class="tb-diff">
             <MarkdownText v-if="rec.original_value" class="was" :text="rec.original_value" />
             <MarkdownText v-if="rec.proposed_value" class="now" :text="rec.proposed_value" />
@@ -922,14 +922,14 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
       <h2>Критерий: предложение AI</h2>
       <p class="tb-side-note">Ничего не меняется, пока вы не вставите. Всё вставленное потом правится руками.</p>
       <div class="tb-crit-proposed">
-        <b>{{ critPreview.proposed.title }} · {{ critPreview.proposed.max_score }} б.</b>
-        <p><small>Подсказка студенту</small>{{ critPreview.proposed.student_hint || '—' }}</p>
+        <b><MarkdownText inline :text="critPreview.proposed.title" /> · {{ critPreview.proposed.max_score }} б.</b>
+        <p><small>Подсказка студенту</small><MarkdownText inline :text="critPreview.proposed.student_hint || '—'" /></p>
         <p><small>Что проверяет ревьюер</small></p>
         <MarkdownText :text="critPreview.proposed.description || '—'" />
         <p v-if="critPreview.proposed.expected_signals?.length"><small>Признаки сильного ответа</small></p>
-        <ul v-if="critPreview.proposed.expected_signals?.length"><li v-for="(sig, si) in critPreview.proposed.expected_signals" :key="si">{{ sig }}</li></ul>
+        <ul v-if="critPreview.proposed.expected_signals?.length"><li v-for="(sig, si) in critPreview.proposed.expected_signals" :key="si"><MarkdownText inline :text="sig" /></li></ul>
         <p v-if="critPreview.proposed.levels?.length"><small>Уровни и пороги</small></p>
-        <ul v-if="critPreview.proposed.levels?.length"><li v-for="(lv, li) in critPreview.proposed.levels" :key="li"><em>{{ lv.points }}</em> {{ lv.label }} — {{ lv.descriptor }}</li></ul>
+        <ul v-if="critPreview.proposed.levels?.length"><li v-for="(lv, li) in critPreview.proposed.levels" :key="li"><em>{{ lv.points }}</em> {{ lv.label }} — <MarkdownText inline :text="lv.descriptor || ''" /></li></ul>
       </div>
       <div class="tb-rec-actions">
         <button class="text-button" @click="critPreview = null">Отмена</button>
