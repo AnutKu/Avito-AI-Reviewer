@@ -1,0 +1,93 @@
+{
+ "measured_at": "2026-09-05T18:45:39.357539+00:00",
+ "model": "glm-5.3-flash",
+ "price_per_million": {
+  "in": 0.075,
+  "out": 0.25
+ },
+ "operations": [
+  {
+   "key": "review",
+   "title": "Проверка работы по критериям",
+   "unit": "вызов",
+   "runs": 2,
+   "median_seconds": 34.9104,
+   "spread": "25.6–44.2 с",
+   "error": null,
+   "tokens_in": 7889,
+   "tokens_out": 2682,
+   "cost_usd": 0.001262,
+   "calls": 2
+  },
+  {
+   "key": "blitz_questions",
+   "title": "Составить вопросы студенту",
+   "unit": "вызов",
+   "runs": 2,
+   "median_seconds": 11.8468,
+   "spread": "8.0–15.7 с",
+   "error": null,
+   "tokens_in": 7329,
+   "tokens_out": 747,
+   "cost_usd": 0.000736,
+   "calls": 2
+  },
+  {
+   "key": "ai_detection",
+   "title": "Проверка на признаки AI-генерации",
+   "unit": "вызов",
+   "runs": 2,
+   "median_seconds": 28.2186,
+   "spread": "22.5–33.9 с",
+   "error": null,
+   "tokens_in": 23208,
+   "tokens_out": 2622,
+   "cost_usd": 0.002396,
+   "calls": 2
+  },
+  {
+   "key": "feedback_copilot",
+   "title": "Переписать обратную связь под тон курса",
+   "unit": "вызов",
+   "runs": 2,
+   "median_seconds": 7.9747,
+   "spread": "4.3–11.6 с",
+   "error": null,
+   "tokens_in": 1600,
+   "tokens_out": 568,
+   "cost_usd": 0.000262,
+   "calls": 2
+  },
+  {
+   "key": "distribution_auto",
+   "title": "Распределить очередь автоматически (очередь 24 работ)",
+   "unit": "прогон",
+   "runs": 2,
+   "median_seconds": 0.022,
+   "spread": "7–37 мс",
+   "error": null
+  },
+  {
+   "key": "distribution_manual",
+   "title": "Подобрать ревьюера для одной работы",
+   "unit": "работа",
+   "runs": 2,
+   "median_seconds": 0.0068,
+   "spread": "7–7 мс",
+   "error": null
+  },
+  {
+   "key": "persona_run",
+   "title": "Проверить задание на AI-персонах",
+   "unit": "прогон",
+   "runs": 2,
+   "median_seconds": 66.5995,
+   "spread": "24.2–109.0 с",
+   "error": null,
+   "tokens_in": 31543,
+   "tokens_out": 12544,
+   "cost_usd": 0.071775,
+   "calls": 9
+  }
+ ]
+}
