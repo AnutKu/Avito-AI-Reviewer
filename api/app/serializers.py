@@ -183,11 +183,20 @@ def detection_data(detection: AiDetection | None) -> dict | None:
     if not detection:
         return None
     reportable = detection.status == "ready" and detection.confidence != "low"
+    # Голосование лежит в raw_result: колонок под него в ai_detections нет и не
+    # заводилось — новые колонки в существующей таблице проект не накатывает.
+    raw = detection.raw_result or {}
     return {
         "id": str(detection.id),
         "status": detection.status,
         "score": int(detection.score) if reportable and detection.score is not None else None,
         "category": detection.category if reportable else None,
+        # Вердикт и голоса — то же деление, что и категория, но с раскладкой по
+        # прогонам: единогласное «AI» и перевес 2:1 читаются по-разному, и
+        # склеивать их в одну подпись значило бы прятать от ревьюера разницу.
+        "verdict": raw.get("verdict") if reportable else None,
+        "votes": raw.get("votes", []) if reportable else [],
+        "vote_agreement": raw.get("agreement") if reportable else None,
         "confidence": detection.confidence,
         "coverage": detection.coverage,
         "contributions": detection.contributions if reportable else [],

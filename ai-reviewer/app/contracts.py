@@ -131,6 +131,28 @@ DETECTION_INDICATORS: dict[str, str] = {
 assert set(DETECTION_INDICATORS) == set(DetectionIndicatorKey.__args__)
 
 
+DetectionVerdict = Literal["human", "human_ai_assisted", "ai"]
+
+# Определения уходят в промпт дословно: вердикт выносит модель, и три слова без
+# описания она трактует каждый прогон по-своему — тогда голосование считает
+# разброс формулировок, а не разброс мнений о решении.
+VERDICT_DEFINITIONS: dict[str, str] = {
+    "human": "решение написано человеком, следов генерации не наблюдается",
+    "human_ai_assisted": (
+        "человек писал сам, но пользовался AI как инструментом: подсказки, "
+        "отдельные куски кода, формулировки в тексте"
+    ),
+    "ai": "решение целиком или почти целиком сгенерировано",
+}
+
+# Порядок «строгости» вывода. Нужен ровно для одного: разрешать ничью серединой,
+# а не алфавитом — см. _majority_verdict в reviewer.py.
+VERDICT_SEVERITY: dict[str, int] = {"human": 0, "human_ai_assisted": 1, "ai": 2}
+
+assert set(VERDICT_DEFINITIONS) == set(DetectionVerdict.__args__)
+assert set(VERDICT_SEVERITY) == set(DetectionVerdict.__args__)
+
+
 class DetectionRequest(StrictModel):
     assignment: AssignmentInput
     snapshot: SnapshotInput
@@ -143,13 +165,16 @@ class DetectionIndicator(StrictModel):
 
 
 class DetectionResult(StrictModel):
-    """Ни score, ни probability, ни percent: число считает core api.
+    """Итог ОДНОГО прогона детектора: наблюдаемые признаки и один вердикт.
 
-    У модели нет внутренней шкалы, на которой 73 и 68 отличались бы, поэтому
-    её просят перечислить наблюдаемое, а не оценить вероятность.
+    Ни score, ни probability, ни percent: число считает core api. У модели нет
+    внутренней шкалы, на которой 73 и 68 отличались бы, поэтому её просят
+    перечислить наблюдаемое и назвать одну из трёх категорий, а не оценить
+    вероятность.
     """
 
     indicators: list[DetectionIndicator] = Field(default_factory=list, max_length=11)
+    verdict: DetectionVerdict
     summary: str = Field(min_length=1, max_length=2000)
     limitations: str = Field(min_length=1, max_length=3000)
 
@@ -161,8 +186,39 @@ class DetectionResult(StrictModel):
         return self
 
 
+class DetectionVote(StrictModel):
+    """Как разошлись прогоны. Модель и промпт у всех голосов одни и те же.
+
+    Разные модели дали бы разброс их характеров; одна и та же модель на одном и
+    том же промпте даёт разброс собственной выборки — а он и есть то, что нас
+    интересует: устойчив ли вывод об этой конкретной работе. Поэтому
+    `agreement` отдаётся наружу вместе с вердиктом: 3 из 3 и 2 из 3 — разные
+    основания смотреть работу, и решать это ревьюеру, а не нам.
+    """
+
+    verdict: DetectionVerdict
+    # По голосу на прогон, в порядке вызовов. Короче запрошенного, если часть
+    # прогонов не дошла: голосование по двум голосам лучше, чем отказ целиком.
+    votes: list[DetectionVerdict] = Field(min_length=1)
+    agreement: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def agreement_matches_votes(self) -> "DetectionVote":
+        if self.agreement != self.votes.count(self.verdict):
+            raise ValueError("agreement must count the votes for the winning verdict")
+        return self
+
+
 class DetectionResponse(StrictModel):
+    """`result` — отчёт того прогона, который голосовал как большинство.
+
+    Не склейка трёх: признаки, summary и вердикт внутри одного прогона
+    согласованы между собой, а у смеси трёх отчётов эта связь теряется —
+    ревьюер читал бы обоснование от одного рассуждения под выводом от другого.
+    """
+
     result: DetectionResult
+    vote: DetectionVote
     metadata: ProviderMetadata
 
 

@@ -1,4 +1,5 @@
 import json
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,28 +12,34 @@ from app.reviewer import ZaiInvalidResponse, ZaiNotConfigured, ZaiReviewer
 class FakeCompletions:
     """Список ответов — по одному на вызов; последний повторяется.
 
-    Вызовов стало больше одного: ответ не по контракту модель чинит следующим
-    сообщением. `kwargs` остаётся последним вызовом, `calls` хранит все.
+    Вызовов стало больше одного по двум причинам: ответ не по контракту модель
+    чинит следующим сообщением, а детекция голосует несколькими прогонами и
+    зовёт модель параллельно. Отсюда замок: без него два потока получают один
+    и тот же номер ответа, и тест на голосование ловит гонку, а не логику.
+    `kwargs` остаётся последним вызовом, `calls` хранит все.
     """
 
     def __init__(self, content):
         self.contents = [content] if isinstance(content, str) else list(content)
         self.calls = []
-
-    @property
-    def content(self):
-        return self.contents[min(len(self.calls) - 1, len(self.contents) - 1)]
+        self._lock = threading.Lock()
 
     @property
     def kwargs(self):
         return self.calls[-1] if self.calls else None
 
     def create(self, **kwargs):
-        self.calls.append(kwargs)
+        with self._lock:
+            self.calls.append(kwargs)
+            index = min(len(self.calls) - 1, len(self.contents) - 1)
+            content = self.contents[index]
+            number = len(self.calls)
+        if isinstance(content, Exception):
+            raise content
         return SimpleNamespace(
             model="glm-5.3-flash",
-            request_id=f"request-test-{len(self.calls)}",
-            choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
+            request_id=f"request-test-{number}",
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
             usage=SimpleNamespace(prompt_tokens=100, completion_tokens=50),
         )
 

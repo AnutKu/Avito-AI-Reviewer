@@ -211,5 +211,47 @@ class CategoryTest(unittest.TestCase):
         self.assertIsNone(scale.category_of(88, scale.CONFIDENCE_LOW))
 
 
+class VerdictCategoryTest(unittest.TestCase):
+    """Категорию называет голосование прогонов; пороги — запасной путь."""
+
+    def test_verdict_decides_the_category_over_the_thresholds(self):
+        # Индекс 10 попал бы в no_signs по порогам, но большинство прогонов
+        # сказало «ai». Число и вердикт отвечают на разные вопросы, и вердикт
+        # отвечает именно на этот.
+        self.assertEqual(
+            scale.category_of(10, scale.CONFIDENCE_HIGH, "ai"),
+            scale.CATEGORY_LIKELY_GENERATED,
+        )
+        self.assertEqual(
+            scale.category_of(95, scale.CONFIDENCE_HIGH, "human"),
+            scale.CATEGORY_NO_SIGNS,
+        )
+
+    def test_every_verdict_maps_onto_a_category(self):
+        for verdict, category in scale.VERDICT_CATEGORY.items():
+            self.assertEqual(scale.category_of(50, scale.CONFIDENCE_HIGH, verdict), category)
+
+    def test_missing_verdict_falls_back_to_the_thresholds(self):
+        # Прогон без голосования: старая запись или вызов из теста якорей.
+        self.assertEqual(
+            scale.category_of(88, scale.CONFIDENCE_HIGH, None),
+            scale.CATEGORY_LIKELY_GENERATED,
+        )
+
+    def test_low_confidence_outranks_any_verdict(self):
+        # Наблюдать было нечего: три прогона по пустому месту сходятся не лучше
+        # одного, и категория не выставляется независимо от того, что они решили.
+        self.assertIsNone(scale.category_of(10, scale.CONFIDENCE_LOW, "ai"))
+
+    def test_verdict_does_not_move_the_number(self):
+        facts = parsed()
+        arguments = {"parsed_facts": facts, "snapshot_content": "x", "indicators": []}
+
+        self.assertEqual(
+            scale.compute(**arguments, verdict="ai").score,
+            scale.compute(**arguments, verdict="human").score,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,10 @@ services:
       ZAI_MODEL: ${ZAI_MODEL:-glm-5.3-flash}
       ZAI_REASONING_EFFORT: ${ZAI_REASONING_EFFORT:-low}
       ZAI_TIMEOUT_SECONDS: ${ZAI_TIMEOUT_SECONDS:-120}
+      # Сколько прогонов детектора голосует за вердикт. Прогоны параллельны,
+      # поэтому ожидание не растёт, а токены — втрое: ставить больше трёх есть
+      # смысл, только если вердикт по курсу заметно скачет от запуска к запуску.
+      DETECTION_VOTES: ${DETECTION_VOTES:-3}
       # Один и тот же лимит у api и ai-reviewer: снапшот режет только тот,
       # кто его собирает. Расхождение = молча потерянный хвост решения.
       MAX_SNAPSHOT_CHARS: ${MAX_SNAPSHOT_CHARS:-120000}

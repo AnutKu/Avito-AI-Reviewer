@@ -81,16 +81,36 @@ class DetectionIndicator(ContractModel):
     note: str
 
 
+DetectionVerdict = Literal["human", "human_ai_assisted", "ai"]
+
+
 class DetectionResult(ContractModel):
-    """Ни score, ни probability: индекс считает services/detection_scale.py."""
+    """Ни score, ни probability: индекс считает services/detection_scale.py.
+
+    `verdict` — категория, а не число: её модель назвать может, шкалу — нет.
+    """
 
     indicators: list[DetectionIndicator] = Field(default_factory=list)
+    verdict: DetectionVerdict
     summary: str
     limitations: str
 
 
+class DetectionVote(ContractModel):
+    """Голосование нескольких одинаковых прогонов детектора.
+
+    `agreement` — сколько голосов из `votes` пришлось на победивший вердикт.
+    Число едет до ревьюера: 3 из 3 и 2 из 3 — разные основания смотреть работу.
+    """
+
+    verdict: DetectionVerdict
+    votes: list[DetectionVerdict]
+    agreement: int
+
+
 class DetectionResponse(ContractModel):
     result: DetectionResult
+    vote: DetectionVote
     metadata: ProviderMetadata
 
 

@@ -41,6 +41,16 @@ CATEGORY_NO_SIGNS = "no_signs"
 CATEGORY_TOOL_ASSISTED = "tool_assisted"
 CATEGORY_LIKELY_GENERATED = "likely_generated"
 
+# Вердикт голосования моделей → категория кабинета. Слова разные, деление одно:
+# сервису ai-reviewer три категории названы так, как о них думает человек,
+# кабинет хранит те же три под своими давними именами, и переименовывать
+# половину схемы ради совпадения строк смысла нет.
+VERDICT_CATEGORY: dict[str, str] = {
+    "human": CATEGORY_NO_SIGNS,
+    "human_ai_assisted": CATEGORY_TOOL_ASSISTED,
+    "ai": CATEGORY_LIKELY_GENERATED,
+}
+
 CONFIDENCE_HIGH = "high"
 CONFIDENCE_MEDIUM = "medium"
 CONFIDENCE_LOW = "low"
@@ -227,11 +237,25 @@ def confidence_of(value: float, parsed_facts: dict) -> str:
     return CONFIDENCE_LOW
 
 
-def category_of(score: int, confidence: str) -> str | None:
-    """При низком покрытии категория не выставляется: делить нечего."""
+def category_of(score: int, confidence: str, verdict: str | None = None) -> str | None:
+    """Категорию называет голосование прогонов, если оно состоялось.
+
+    С этого момента число и категория отвечают на разные вопросы: индекс — «что
+    наблюдается и с каким весом», вердикт — «чем это, по мнению большинства
+    прогонов, является». Разойтись им позволено: расхождение видно ревьюеру
+    рядом с раскладкой и само по себе повод посмотреть работу внимательнее.
+    Пороги по индексу — запасной путь: старые прогоны и вызовы без голосования
+    делятся ровно как раньше.
+
+    При низком покрытии категория не выставляется независимо от вердикта:
+    наблюдать было нечего, и голосование трёх прогонов по пустому месту сходится
+    не лучше, чем один.
+    """
 
     if confidence == CONFIDENCE_LOW:
         return None
+    if verdict in VERDICT_CATEGORY:
+        return VERDICT_CATEGORY[verdict]
     if score < 35:
         return CATEGORY_NO_SIGNS
     if score <= 70:
@@ -244,11 +268,17 @@ def compute(
     parsed_facts: dict,
     snapshot_content: str,
     indicators: list[dict],
+    verdict: str | None = None,
 ) -> DetectionScore:
     """`indicators` — то, что вернула модель: [{key, evidence, note}].
 
     Признаки с источником FACTS из ответа модели игнорируются целиком: их
     величину даёт `parsed_facts`, а модель может лишь приложить комментарий.
+
+    `verdict` — победивший вердикт голосования прогонов, если оно было. Число
+    от него не зависит ни при каком значении: индекс остаётся тем же самым
+    детерминированным сложением, и воспроизводимость, ради которой он вынесен
+    из LLM, никуда не девается. Вердикт решает только деление на категории.
     """
 
     notes = {
@@ -296,6 +326,6 @@ def compute(
         score=score,
         coverage=round(value, 3),
         confidence=confidence,
-        category=category_of(score, confidence),
+        category=category_of(score, confidence, verdict),
         contributions=contributions,
     )

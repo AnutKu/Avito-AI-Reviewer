@@ -390,6 +390,7 @@ def run_detection(review_id: UUID) -> None:
                 parsed_facts=snapshot.parsed_facts,
                 snapshot_content=snapshot.content,
                 indicators=[item.model_dump() for item in response.result.indicators],
+                verdict=response.vote.verdict,
             )
             detection.score = score.score
             detection.coverage = score.coverage
@@ -400,10 +401,17 @@ def run_detection(review_id: UUID) -> None:
             detection.limitations = response.result.limitations
             detection.model = response.metadata.model
             detection.status = AiStatus.READY
+            # Голосование живёт в raw_result, а не в своих колонках: новые
+            # колонки в существующей таблице этот проект накатывать не умеет —
+            # ни Alembic, ни ALTER (см. models/detection.py). JSONB такого
+            # ограничения не знает, а читает вердикт один serializers.py.
             detection.raw_result = {
                 **(detection.raw_result or {}),
                 "provider": response.metadata.provider,
                 "request_id": response.metadata.request_id,
+                "verdict": response.vote.verdict,
+                "votes": list(response.vote.votes),
+                "agreement": response.vote.agreement,
             }
             _record_call(db, review.id, "ai_detection", response.metadata)
             _sync_ai_signal(db, review, detection, score)

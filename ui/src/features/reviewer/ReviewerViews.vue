@@ -151,6 +151,15 @@ const CATEGORY_TITLES = {
   likely_generated: 'Похоже на сгенерированное решение',
 }
 
+// Вердикт голосования прогонов. Те же три категории, что и выше, но названные
+// так, как о них думают: подпись «2 из 3» рядом объясняет, откуда категория
+// взялась, — иначе она выглядит как вывод из индекса, а индекс её не считает.
+const VERDICT_TITLES = {
+  human: 'Human',
+  human_ai_assisted: 'Human + AI assistant',
+  ai: 'AI',
+}
+
 const CONFIDENCE_TITLES = {
   high: 'Высокая — было что наблюдать',
   medium: 'Средняя — часть признаков недоступна',
@@ -454,6 +463,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               <div class="detection-meta">
                 <b>{{ current.detection.reportable ? CATEGORY_TITLES[current.detection.category] : 'Признаков недостаточно для оценки' }}</b>
                 <span class="confidence" :class="current.detection.confidence">{{ CONFIDENCE_TITLES[current.detection.confidence] }}</span>
+                <span v-if="current.detection.verdict" class="detection-vote">
+                  Голосование прогонов: <b>{{ VERDICT_TITLES[current.detection.verdict] }}</b>
+                  <i :class="{ split: current.detection.vote_agreement < current.detection.votes.length }">{{ current.detection.vote_agreement }} из {{ current.detection.votes.length }}</i>
+                  <em v-for="(vote, index) in current.detection.votes" :key="index" :class="vote">{{ VERDICT_TITLES[vote] }}</em>
+                </span>
                 <small v-if="current.detection.reportable">Индекс признаков, а не вероятность: 30 — ничего не наблюдали, ниже — следы ручной работы, выше — следы генерации. Считается детерминированно, раскладку видно ниже.</small>
                 <small v-else>Покрытие {{ Math.round(current.detection.coverage * 100) }}% — короткая работа или обрезанный снапшот. Число не показываем: «мало данных» и «мало признаков» дают одинаково низкую отметку.</small>
               </div>
