@@ -83,11 +83,16 @@ class FakeEngine:
         FakeEngine.last_samples = samples
         return {"id": "engine-run-1", "status": "running", "progress": "решатели работают"}
 
-    def assist_criterion(self, *, title, max_points, student_hint="", description="", task_context=None):
+    last_existing: list = []
+
+    def assist_criterion(
+        self, *, title="", max_points, student_hint="", description="", task_context=None, existing=None
+    ):
         del student_hint, description, task_context
         FakeEngine.calls.append("assist:criterion")
+        FakeEngine.last_existing = list(existing or [])
         return {
-            "key": "c1", "title": title, "max_points": max_points,
+            "key": "c1", "title": title or "Придуманный критерий", "max_points": max_points,
             "student_hint": "что оценивается", "description": "проверяемый признак",
             "check_kind": "subjective", "evidence_hint": "куда смотреть",
             "expected_signals": ["есть формула", "есть вывод"],
@@ -536,3 +541,22 @@ def test_reviewer_sees_levels_without_the_reference_solution(methodist, client):
     assert for_reviewer["rubric"][0]["levels"], "градация ревьюеру нужна"
     assert "authoring" not in for_reviewer
     assert "СЕКРЕТНЫЙ ЭТАЛОН" not in str(for_reviewer)
+
+
+def test_a_criterion_can_be_asked_for_without_a_title(methodist, engine):
+    """Методист добавил критерий и не знает, что писать, — это законный вход."""
+
+    response = methodist.post(
+        "/api/methodist/ai-criterion",
+        json={"max_score": 4, "context": {"title": "Кейс"}, "existing": ["Метрики"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["title"], "название приходит от агента"
+
+
+def test_existing_criteria_are_passed_so_the_agent_does_not_repeat_them(methodist, engine):
+    methodist.post(
+        "/api/methodist/ai-criterion",
+        json={"max_score": 4, "existing": ["Метрики", "Выводы"]},
+    )
+    assert engine.last_existing == ["Метрики", "Выводы"]

@@ -112,14 +112,23 @@ def assist_criterion(llm: LLMClient, body: CriterionAssistIn) -> Criterion:
     out = llm.structured(
         system=P.CRITERION_SYSTEM,
         user=P.criterion_user(
-            body.title, body.max_points, body.student_hint, body.description, body.task_context
+            body.title,
+            body.max_points,
+            body.student_hint,
+            body.description,
+            body.task_context,
+            body.existing,
         ),
         schema=Criterion,
         tier="smart",
         temperature=0.3,
         max_tokens=3000,
     )
-    return out.model_copy(update={"title": body.title, "max_points": body.max_points})
+    # Название держим за автором, если он его задал; вес — всегда за ним.
+    keep = {"max_points": body.max_points}
+    if body.title.strip():
+        keep["title"] = body.title
+    return out.model_copy(update=keep)
 
 
 def assist_field(llm: LLMClient, body: FieldAssistIn) -> FieldAssistOut:

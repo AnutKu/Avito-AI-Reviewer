@@ -527,13 +527,21 @@ class FieldAssistOut(BaseModel):
 
 
 class CriterionAssistIn(BaseModel):
-    """Достроить критерий до проверяемого: описание, признаки, уровни."""
+    """Достроить критерий до проверяемого: описание, признаки, уровни.
 
-    title: str = Field(min_length=1)
+    Пустое `title` — законный случай: методист добавил критерий и хочет, чтобы
+    агент предложил, что вообще стоит оценивать в этом задании. Тогда название
+    придумывает агент, глядя на задание и на уже заведённые критерии.
+    """
+
+    title: str = ""
     max_points: float = Field(gt=0)
     student_hint: str = ""
     description: str = ""
     task_context: dict[str, Any] = Field(default_factory=dict)
+    existing: list[str] = Field(
+        default_factory=list, description="названия уже заведённых критериев — чтобы не дублировать"
+    )
 
 
 # --------------------------------------------------------------------------- #

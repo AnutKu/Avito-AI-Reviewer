@@ -102,11 +102,21 @@ export function sortAssignments(rows, mode) {
 
 // --- арифметика баллов -----------------------------------------------------
 
+// Критерий без названия ещё не заведён: он пустая карточка, которую методист
+// только что добавил. В сумму баллов, в предупреждения и в рубрику он не идёт —
+// иначе пустая заготовка ломает арифметику до того, как её начали заполнять.
+export const filledCriteria = (criteria) =>
+  (criteria || []).filter(c => (c.title || '').trim())
+
 export const criteriaTotal = (criteria) =>
-  (criteria || []).reduce((sum, c) => sum + (Number(c.max_score) || 0), 0)
+  filledCriteria(criteria).reduce((sum, c) => sum + (Number(c.max_score) || 0), 0)
+
+// Проходной балл по умолчанию — 60% от суммы, целым числом. Дробный порог на
+// экране студента выглядит как ошибка, а спорить о десятых долях балла незачем.
+export const defaultPassScore = (criteria) => Math.round(criteriaTotal(criteria) * 0.6)
 
 export function scoreWarning(criteria, passScore) {
-  const rows = criteria || []
+  const rows = filledCriteria(criteria)
   if (!rows.length) return 'Добавьте хотя бы один критерий.'
   if (rows.some(c => !(Number(c.max_score) > 0))) return 'У каждого критерия должен быть балл больше нуля.'
   const total = criteriaTotal(rows)
@@ -167,9 +177,10 @@ export function publishBlockers(draft) {
   const blockers = []
   if (!(draft.title || '').trim()) blockers.push('название')
   if (!(draft.statement || '').trim()) blockers.push('условие')
-  if (!(draft.criteria || []).length) blockers.push('хотя бы один критерий')
+  const filled = filledCriteria(draft.criteria)
+  if (!filled.length) blockers.push('хотя бы один критерий')
   const warning = scoreWarning(draft.criteria, draft.pass_score)
-  if (warning && (draft.criteria || []).length) blockers.push('корректные баллы критериев')
+  if (warning && filled.length) blockers.push('корректные баллы критериев')
   return blockers
 }
 

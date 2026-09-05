@@ -17,6 +17,8 @@ import {
   debtFace,
   debtLink,
   criteriaTotal,
+  defaultPassScore,
+  filledCriteria,
   filterAssignments,
   isDirty,
   kindLabel,
@@ -76,20 +78,39 @@ describe('список', () => {
 })
 
 describe('баллы', () => {
-  it('максимум — сумма критериев', () => {
-    assert.equal(criteriaTotal([{ max_score: 4 }, { max_score: 6 }]), 10)
+  it('максимум — сумма заполненных критериев', () => {
+    assert.equal(criteriaTotal([{ title: 'A', max_score: 4 }, { title: 'B', max_score: 6 }]), 10)
+  })
+
+  it('пустая заготовка в сумму не идёт', () => {
+    // Иначе добавленный, но ещё не заполненный критерий ломает арифметику
+    // раньше, чем в него что-то написали.
+    assert.equal(criteriaTotal([{ title: 'A', max_score: 4 }, { title: '', max_score: 5 }]), 4)
+    assert.equal(filledCriteria([{ title: 'A' }, { title: '  ' }]).length, 1)
+  })
+
+  it('проходной балл по умолчанию — 60% суммы, целым числом', () => {
+    assert.equal(defaultPassScore([{ title: 'A', max_score: 4 }, { title: 'B', max_score: 6 }]), 6)
+    assert.equal(defaultPassScore([{ title: 'A', max_score: 7 }]), 4, 'дробный порог округляется')
+    assert.equal(defaultPassScore([]), 0)
   })
 
   it('проходной балл выше максимума — предупреждение', () => {
-    assert.match(scoreWarning([{ max_score: 4 }], 6), /больше максимума/)
+    assert.match(scoreWarning([{ title: 'A', max_score: 4 }], 6), /больше максимума/)
   })
 
   it('нулевой балл критерия ловится отдельно', () => {
-    assert.match(scoreWarning([{ max_score: 0 }], 0), /больше нуля/)
+    assert.match(scoreWarning([{ title: 'A', max_score: 0 }], 0), /больше нуля/)
   })
 
   it('корректная рубрика молчит', () => {
-    assert.equal(scoreWarning([{ max_score: 4 }, { max_score: 6 }], 6), '')
+    assert.equal(scoreWarning([{ title: 'A', max_score: 4 }, { title: 'B', max_score: 6 }], 6), '')
+  })
+
+  it('пустая заготовка не мешает публикации', () => {
+    const draft = { title: 'Кейс', statement: 'Условие', pass_score: 3,
+      criteria: [{ title: 'A', max_score: 5 }, { title: '', max_score: 5 }] }
+    assert.deepEqual(publishBlockers(draft), [])
   })
 })
 
@@ -106,8 +127,13 @@ describe('редактор', () => {
   })
 
   it('заполненный черновик публикуется без замечаний', () => {
-    const ok = { title: 'Кейс', statement: 'Условие', criteria: [{ max_score: 5 }], pass_score: 3 }
+    const ok = { title: 'Кейс', statement: 'Условие', criteria: [{ title: 'A', max_score: 5 }], pass_score: 3 }
     assert.deepEqual(publishBlockers(ok), [])
+  })
+
+  it('черновик из одних пустых заготовок публиковать нечего', () => {
+    const blank = { title: 'Кейс', statement: 'Условие', criteria: [{ title: '', max_score: 5 }] }
+    assert.ok(publishBlockers(blank).includes('хотя бы один критерий'))
   })
 })
 

@@ -175,13 +175,18 @@ class AiRunPayload(BaseModel):
 
 
 class CriterionAssistPayload(BaseModel):
-    """Достроить критерий до применимого. Ответ — предложение, не запись."""
+    """Достроить критерий до применимого. Ответ — предложение, не запись.
 
-    title: str = Field(min_length=1)
+    Пустое название допустимо: тогда агент сам предлагает, что стоит оценивать
+    в этом задании, глядя на уже заведённые критерии.
+    """
+
+    title: str = ""
     max_score: float = Field(gt=0, le=100)
     student_hint: str = ""
     description: str = ""
     context: dict = Field(default_factory=dict)
+    existing: list[str] = Field(default_factory=list)
 
 
 class RecommendationDecision(BaseModel):
@@ -1032,6 +1037,7 @@ def ai_criterion(payload: CriterionAssistPayload, user: User = Depends(methodist
         student_hint=payload.student_hint,
         description=payload.description,
         task_context={k: v for k, v in payload.context.items() if isinstance(v, str) and v},
+        existing=[name for name in payload.existing if name],
     )
     return task_ai.from_engine_criterion(out)
 

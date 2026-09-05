@@ -10,8 +10,9 @@ import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import {
   AI_BLOCKS, PERSONA_TYPE, RUN_STATE, SEVERITY, SOLUTIONS_NOTE, criteriaTotal,
   decidedRecommendations, fieldTitle, filterAssignments, isDirty, kindLabel, kindWhy,
-  cleanCriterion, openRecommendations, personaAbout, personaFace, personaName, publishBlockers,
-  runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning, sortAssignments, splitByPublication,
+  cleanCriterion, defaultPassScore, filledCriteria, openRecommendations, personaAbout, personaFace,
+  personaName, publishBlockers, runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning,
+  sortAssignments, splitByPublication,
 } from '../../shared/taskbank'
 
 const props = defineProps({ sub: { type: Array, default: () => [] } })
@@ -78,6 +79,14 @@ const saved = ref(null)
 const highlight = ref('')   // критерий, к которому пришли из образовательного долга
 const saving = ref(false)
 const openCriterion = ref(-1)
+
+// Проходной балл следует за критериями, пока методист не задал его сам: 60% от
+// суммы — разумная отправная точка, а требовать её ввести до того, как критерии
+// заведены, значит просить число, которого ещё неоткуда взять.
+const passTouched = ref(false)
+watch(() => draft.value && criteriaTotal(draft.value.criteria), (total) => {
+  if (draft.value && !passTouched.value && total) draft.value.pass_score = defaultPassScore(draft.value.criteria)
+})
 
 const dirty = computed(() => !!draft.value && isDirty(draft.value, saved.value))
 const total = computed(() => criteriaTotal(draft.value?.criteria))
@@ -183,11 +192,17 @@ function watchActiveRuns() {
 
 async function openEditor() {
   if (!rows.value.length) await loadList()
-  if (props.sub[0] === 'new') { draft.value = blankDraft(); saved.value = JSON.parse(JSON.stringify(draft.value)); runs.value = []; return }
+  if (props.sub[0] === 'new') {
+    draft.value = blankDraft(); saved.value = JSON.parse(JSON.stringify(draft.value))
+    passTouched.value = false; runs.value = []
+    return
+  }
   const row = rows.value.find(r => r.id === editedId.value)
   if (!row) { error.value = 'Задание не найдено'; go(); return }
   draft.value = toDraft(row)
   saved.value = JSON.parse(JSON.stringify(draft.value))
+  // У сохранённого задания балл уже выбран человеком — не перебиваем его.
+  passTouched.value = true
   highlight.value = focusCriterion.value
   try { runs.value = await api(`/methodist/assignments/${row.id}/ai-runs`) } catch { runs.value = [] }
   watchActiveRuns()
@@ -388,29 +403,42 @@ async function waitForDraft(jobId) {
 // поставить балл однозначно. Просим агента сразу, а не чиним потом правкой по
 // итогам прогона: это же замечание он вернул бы первым.
 const detailing = ref(-1)
-async function detailCriterion(index) {
+const critPreview = ref(null)   // { index, current, proposed }
+
+// Тот же порядок, что и у блоков задания выше: сначала предложение, потом
+// решение человека. Пустой критерий — законный вход: агент посмотрит на
+// задание и на уже заведённые критерии и предложит, что ещё стоит оценивать.
+async function askCriterion(index) {
   const c = draft.value.criteria[index]
-  if (!(c.title || '').trim()) { error.value = 'Сначала назовите критерий'; return }
   detailing.value = index
   try {
     const out = await api('/methodist/ai-criterion', {
       method: 'POST',
       body: JSON.stringify({
-        title: c.title, max_score: Number(c.max_score) || 1,
+        title: c.title || '', max_score: Number(c.max_score) || 1,
         student_hint: c.student_hint, description: c.description, context: aiContext(),
+        existing: filledCriteria(draft.value.criteria).filter((_, i) => i !== index).map(x => x.title),
       }),
     })
-    draft.value.criteria[index] = {
-      ...c,
-      student_hint: c.student_hint || out.student_hint,
-      description: out.description,
-      expected_signals: out.expected_signals,
-      levels: out.levels,
-    }
-    openCriterion.value = index
-    notice.value = `Критерий «${c.title}» дополнен: признаки и уровни`
+    critPreview.value = { index, current: c, proposed: out }
   } catch (e) { error.value = e.message } finally { detailing.value = -1 }
 }
+
+function acceptCriterion() {
+  const { index, current, proposed } = critPreview.value
+  draft.value.criteria[index] = {
+    ...current,
+    title: proposed.title || current.title,
+    student_hint: proposed.student_hint || current.student_hint,
+    description: proposed.description,
+    expected_signals: proposed.expected_signals,
+    levels: proposed.levels,
+  }
+  notice.value = `Критерий «${draft.value.criteria[index].title}» вставлен`
+  critPreview.value = null
+}
+
+const critFilled = (c) => !!((c.title || '').trim() || (c.description || '').trim())
 
 async function generateDraft() {
   generating.value = true; error.value = ''
@@ -574,7 +602,6 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
           <div class="af-row">
             <label>Дедлайн<input v-model="draft.deadline_at" type="datetime-local" /></label>
             <label>Канал сдачи<select v-model="draft.submission_channel"><option value="github">GitHub</option><option value="stepik">Stepik</option><option value="gdocs">Google Docs</option></select></label>
-            <label>Проходной балл<input v-model.number="draft.pass_score" type="number" min="0" /></label>
           </div>
           <label>Образовательная цель — чему научится студент (по строке)<textarea v-model="draft.authoring.learning_objectives" rows="3" /></label>
         </article>
@@ -599,8 +626,11 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
           <article v-for="(c, i) in draft.criteria" :key="i" class="tb-crit">
             <header class="tb-crit-head">
               <span class="tb-crit-no">{{ i + 1 }}</span>
-              <input v-model="c.title" class="tb-crit-title" placeholder="Название критерия" />
+              <input v-model="c.title" class="tb-crit-title" placeholder="Название критерия — или оставьте пустым и нажмите «Заполнить с AI»" />
               <label class="tb-crit-points">баллов<input v-model.number="c.max_score" type="number" min="0.5" step="0.5" /></label>
+              <button class="text-button" :disabled="detailing === i" @click="askCriterion(i)">
+                {{ detailing === i ? '…' : (critFilled(c) ? '✦ Улучшить с AI' : '✦ Заполнить с AI') }}
+              </button>
             </header>
             <label class="tb-crit-field">Подсказка студенту — одна фраза, без раскрытия ожиданий
               <textarea v-model="c.student_hint" rows="2" />
@@ -630,14 +660,16 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             </div>
 
             <footer class="tb-crit-actions">
-              <button class="secondary" :disabled="detailing === i" @click="detailCriterion(i)">
-                {{ detailing === i ? 'Дополняю…' : '✦ Дополнить признаки и уровни' }}
-              </button>
               <span class="tb-spacer" />
               <button class="text-button danger" :disabled="draft.criteria.length < 2" @click="draft.criteria.splice(i, 1)">удалить критерий</button>
             </footer>
           </article>
           <button class="text-button" @click="draft.criteria.push(emptyCriterion())">＋ ещё критерий</button>
+
+          <label class="tb-pass">
+            <span><b>Проходной балл</b><small>Считается сам — 60% от суммы ({{ defaultPassScore(draft.criteria) }} из {{ total }}). Задайте своё число, если нужен другой порог.</small></span>
+            <input v-model.number="draft.pass_score" type="number" min="0" :max="total" @input="passTouched = true" />
+          </label>
         </article>
 
         <article class="card">
@@ -830,6 +862,26 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
     </article>
   </div>
 
+  <div v-if="critPreview" class="tb-modal" @click.self="critPreview = null">
+    <article class="card tb-modal-card">
+      <h2>Критерий: предложение AI</h2>
+      <p class="tb-side-note">Ничего не меняется, пока вы не вставите. Всё вставленное потом правится руками.</p>
+      <div class="tb-crit-proposed">
+        <b>{{ critPreview.proposed.title }} · {{ critPreview.proposed.max_score }} б.</b>
+        <p><small>Подсказка студенту</small>{{ critPreview.proposed.student_hint || '—' }}</p>
+        <p><small>Что проверяет ревьюер</small>{{ critPreview.proposed.description || '—' }}</p>
+        <p v-if="critPreview.proposed.expected_signals?.length"><small>Признаки сильного ответа</small></p>
+        <ul v-if="critPreview.proposed.expected_signals?.length"><li v-for="(sig, si) in critPreview.proposed.expected_signals" :key="si">{{ sig }}</li></ul>
+        <p v-if="critPreview.proposed.levels?.length"><small>Уровни и пороги</small></p>
+        <ul v-if="critPreview.proposed.levels?.length"><li v-for="(lv, li) in critPreview.proposed.levels" :key="li"><em>{{ lv.points }}</em> {{ lv.label }} — {{ lv.descriptor }}</li></ul>
+      </div>
+      <div class="tb-rec-actions">
+        <button class="text-button" @click="critPreview = null">Отмена</button>
+        <button class="primary" @click="acceptCriterion">Вставить в критерий</button>
+      </div>
+    </article>
+  </div>
+
   <div v-if="runChoice" class="tb-modal" @click.self="runChoice = false">
     <article class="card tb-modal-card">
       <h2>Что проверяем в этот раз</h2>
@@ -895,6 +947,18 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
    целиком, иначе методист правит вслепую, а ревьюер получает обрезанный смысл. */
 .tb-crit { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #fcfcff; }
 .tb-crit.focus { border-color: var(--blue); box-shadow: 0 0 0 3px #e7f4fe; }
+.tb-crit-proposed { margin-top: 12px; font-size: var(--fs-xs); line-height: 1.55; }
+.tb-crit-proposed > b { display: block; font-size: var(--fs-sm); margin-bottom: 8px; }
+.tb-crit-proposed p { margin: 8px 0 0; }
+.tb-crit-proposed small { display: block; color: var(--muted); font-size: var(--fs-3xs);
+  text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
+.tb-crit-proposed ul { margin: 4px 0 0 18px; color: #4b5563; }
+.tb-crit-proposed li em { font-style: normal; font-weight: 700; color: var(--blue); margin-right: 4px; }
+.tb-pass { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.tb-pass b { display: block; font-size: var(--fs-sm); }
+.tb-pass small { display: block; color: var(--muted); font-size: var(--fs-2xs); line-height: 1.5; margin-top: 3px; }
+.tb-pass input { width: 110px; margin-top: 0; }
 .tb-crit-head { display: flex; align-items: center; gap: 10px; }
 .tb-crit-no { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 7px;
   background: #eaf5fe; color: var(--blue); font-size: var(--fs-xs); font-weight: 700; }

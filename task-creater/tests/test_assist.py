@@ -104,3 +104,26 @@ async def test_both_persona_types_in_one_run(client):
     )
     assert started.status_code == 202, started.text
     assert started.json()["config"]["persona_type"] == "both"
+
+
+async def test_a_criterion_can_be_invented_from_nothing(client):
+    """Методист добавил критерий и не знает, что писать, — это законный случай."""
+
+    r = await client.post(
+        "/assist/criterion",
+        json={
+            "max_points": 4,
+            "task_context": {"title": "Анализ оттока", "statement": "Посчитайте отток"},
+            "existing": ["Метрики"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["title"].strip(), "название придумывает агент"
+    assert out["max_points"] == 4, "вес остаётся за автором"
+    assert out["expected_signals"] and out["rubric_levels"]
+
+
+async def test_a_given_title_is_never_rewritten(client):
+    r = await client.post("/assist/criterion", json={"title": "Мой критерий", "max_points": 2})
+    assert r.json()["title"] == "Мой критерий"
