@@ -141,10 +141,27 @@ export function runTypeFrom(students, reviewers) {
   return null
 }
 
+// Что именно предложение агента меняет в критерии.
+//
+// Вес и ключ не трогаются никогда — они принадлежат автору. Название тоже:
+// оно опознаёт критерий, и «улучшить» не должно его переименовывать; агент
+// даёт название, только если своего ещё нет. Остальное — содержание, ради
+// правки которого помощника и звали.
+export function mergeCriterion(current, proposed) {
+  return {
+    title: (current.title || '').trim() || proposed.title || '',
+    student_hint: proposed.student_hint || current.student_hint || '',
+    description: proposed.description || '',
+    expected_signals: proposed.expected_signals || [],
+    levels: proposed.levels || [],
+  }
+}
+
 // Критерий перед отправкой. Пустые строки признаков и недописанные уровни
 // отбрасываем здесь, а не в разметке: иначе в рубрику уезжает мусор, по
 // которому AI-ревьюер потом делает замечание.
 export function cleanCriterion(c) {
+  // `_uid` — ключ списка на стороне экрана, в рубрику ему нельзя.
   return {
     key: c.key || '',
     title: c.title,

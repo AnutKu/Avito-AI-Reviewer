@@ -19,6 +19,7 @@ import {
   criteriaTotal,
   defaultPassScore,
   filledCriteria,
+  mergeCriterion,
   filterAssignments,
   isDirty,
   kindLabel,
@@ -319,5 +320,42 @@ describe('переход из долга в правку', () => {
   it('поиск в банке находит задания темы — иначе переход ведёт в пустоту', () => {
     const rows = [{ title: 'Кейс', course: 'ML', authoring: { topic: 'Работа с данными' } }]
     assert.equal(filterAssignments(rows, 'Работа с данными').length, 1)
+  })
+})
+
+describe('вставка предложения в критерий', () => {
+  const proposed = {
+    title: 'Причины оттока', student_hint: 'что оценивается',
+    description: 'Названы причины с опорой на данные',
+    expected_signals: ['есть расчёт'], levels: [{ points: 0, label: 'Нет', descriptor: 'нет' }],
+  }
+
+  it('вес и ключ остаются за автором', () => {
+    const current = { key: 'churn', max_score: 7, title: 'Мой критерий' }
+    const merged = mergeCriterion(current, proposed)
+    assert.equal(merged.max_score, undefined, 'вес не входит в правку — его не трогают')
+    assert.equal(merged.key, undefined)
+    assert.equal(merged.title, 'Мой критерий', 'своё название не перебивается')
+  })
+
+  it('пустому критерию название даёт агент', () => {
+    assert.equal(mergeCriterion({ title: '' }, proposed).title, 'Причины оттока')
+  })
+
+  it('скрытая часть приезжает целиком', () => {
+    const merged = mergeCriterion({}, proposed)
+    assert.deepEqual(merged.expected_signals, ['есть расчёт'])
+    assert.equal(merged.levels.length, 1)
+  })
+
+  it('ответ без признаков и уровней не оставляет undefined', () => {
+    // Иначе шаблон падает на c.levels.length, и экран замирает до перезагрузки.
+    const merged = mergeCriterion({}, { title: 'X', description: 'Y' })
+    assert.deepEqual(merged.expected_signals, [])
+    assert.deepEqual(merged.levels, [])
+  })
+
+  it('служебный ключ списка не уезжает в рубрику', () => {
+    assert.equal(cleanCriterion({ _uid: 7, title: 'A', max_score: 3 })._uid, undefined)
   })
 })

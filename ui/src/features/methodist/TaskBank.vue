@@ -10,7 +10,7 @@ import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import {
   AI_BLOCKS, PERSONA_TYPE, RUN_STATE, SEVERITY, SOLUTIONS_NOTE, criteriaTotal,
   decidedRecommendations, fieldTitle, filterAssignments, isDirty, kindLabel, kindWhy,
-  cleanCriterion, defaultPassScore, filledCriteria, openRecommendations, personaAbout, personaFace,
+  cleanCriterion, defaultPassScore, filledCriteria, mergeCriterion, openRecommendations, personaAbout, personaFace,
   personaName, publishBlockers, runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning,
   splitByPublication,
 } from '../../shared/taskbank'
@@ -84,7 +84,14 @@ function nextLevel(criterion) {
   return { points: Math.round(next * 2) / 2, label: '', descriptor: '' }
 }
 
-const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '', description: '', expected_signals: [], levels: [] })
+// Ключ списка. По индексу Vue переиспользует карточку при удалении и вставке в
+// середину, и состояние соседа «переезжает» в чужую строку. Свой id живёт
+// только на экране и в рубрику не уходит.
+let uid = 0
+const emptyCriterion = () => ({
+  _uid: ++uid, key: '', title: '', max_score: 5, student_hint: '',
+  description: '', expected_signals: [], levels: [],
+})
 const draft = ref(null)
 const saved = ref(null)
 const highlight = ref('')   // критерий, к которому пришли из образовательного долга
@@ -129,6 +136,7 @@ function toDraft(row) {
       reference_solution: a.reference_solution || '',
     },
     criteria: (row.rubric || []).map(c => ({
+      _uid: ++uid,
       key: c.key || '', title: c.title || '', max_score: c.max_score ?? 1, student_hint: c.student_hint || '',
       description: c.description || '', expected_signals: c.expected_signals || [],
       // Уровни возили только в одну сторону, и при первом же сохранении из
@@ -443,21 +451,18 @@ async function askCriterion(index) {
         existing: filledCriteria(draft.value.criteria).filter((_, i) => i !== index).map(x => x.title),
       }),
     })
-    critPreview.value = { index, current: c, proposed: out }
+    critPreview.value = { index, proposed: out }
   } catch (e) { error.value = e.message } finally { detailing.value = -1 }
 }
 
 function acceptCriterion() {
-  const { index, current, proposed } = critPreview.value
-  draft.value.criteria[index] = {
-    ...current,
-    title: proposed.title || current.title,
-    student_hint: proposed.student_hint || current.student_hint,
-    description: proposed.description,
-    expected_signals: proposed.expected_signals,
-    levels: proposed.levels,
-  }
-  notice.value = `Критерий «${draft.value.criteria[index].title}» вставлен`
+  const { index, proposed } = critPreview.value
+  const target = draft.value.criteria[index]
+  if (!target) { critPreview.value = null; return }
+  // Правим тот же объект, а не подменяем элемент массива: поля формы связаны
+  // именно с ним, и подмена оставляла их со старым значением до перезагрузки.
+  Object.assign(target, mergeCriterion(target, proposed))
+  notice.value = `Критерий «${target.title}» вставлен`
   critPreview.value = null
 }
 
@@ -481,7 +486,9 @@ async function generateDraft() {
     }
     const hasCriteria = d.criteria.some(c => (c.title || '').trim())
     if (!hasCriteria && out.criteria?.length) {
-      d.criteria = out.criteria.map(c => ({ ...c, max_score: c.max_score, expected_signals: c.expected_signals || [] }))
+      d.criteria = out.criteria.map(c => ({
+        ...emptyCriterion(), ...c, expected_signals: c.expected_signals || [], levels: c.levels || [],
+      }))
       d.pass_score = out.pass_score
     } else if (out.criteria?.length) {
       notice.value = 'Критерии уже заполнены — предложенные не подставлены. Очистите их, если хотите заменить.'
@@ -659,7 +666,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
           </div>
           <p v-if="warning" class="tb-warn">⚠ {{ warning }}</p>
           <p v-if="highlight" class="cap-hint">ⓘ Вы пришли сюда из образовательного долга — подсвечен критерий, о котором шла речь.</p>
-          <article v-for="(c, i) in draft.criteria" :key="i" class="tb-crit">
+          <article v-for="(c, i) in draft.criteria" :key="c._uid" class="tb-crit">
             <header class="tb-crit-head">
               <span class="tb-crit-no">{{ i + 1 }}</span>
               <input v-model="c.title" class="tb-crit-title" placeholder="Название критерия — или оставьте пустым и нажмите «Заполнить с AI»" />
