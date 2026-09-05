@@ -67,12 +67,27 @@ async function openRoute(id) {
   } catch (e) { error.value = e.message }
 }
 
+// Отправка идёт через состояние кнопки, а не молча: работа сдаётся один раз, и
+// студенту нужно видеть, что нажатие поймано, дошло и закончилось успехом.
+// Заодно это защита от второго клика, пока запрос в пути.
+const submitState = ref('idle')
+let submitTimer = null
+
 async function submit() {
+  if (submitState.value !== 'idle') return
+  error.value = ''
+  submitState.value = 'sending'
   try {
     await api(`/student/assignments/${detail.value.id}/submissions`, { method: 'POST', body: JSON.stringify({ source_url: sourceUrl.value }) })
+    submitState.value = 'sent'
     await loadAssignments()
-    emit('navigate', ROOT)
-  } catch (e) { error.value = e.message }
+    // Уходим в список не сразу: без этой паузы галочка не успевает доиграть, и
+    // отправка выглядит как ничем не объяснённый прыжок на другой экран.
+    submitTimer = setTimeout(() => { submitState.value = 'idle'; emit('navigate', ROOT) }, 900)
+  } catch (e) {
+    error.value = e.message
+    submitState.value = 'idle'
+  }
 }
 
 // Сбор поведения при ответе на блиц. Объявлен студенту в telemetry_notice —
@@ -166,6 +181,7 @@ onUnmounted(() => {
   window.removeEventListener('focus', onFocus)
   document.removeEventListener('visibilitychange', onVisibility)
   clearInterval(flushTimer)
+  clearTimeout(submitTimer)
 })
 </script>
 
@@ -200,7 +216,7 @@ onUnmounted(() => {
         <!-- Работа сдаётся один раз. По «назад» сюда можно вернуться уже после
              отправки — тогда вместо формы показываем, что с работой сейчас. -->
         <aside v-if="detail.submission" class="card submit-card"><span class="card-icon blue">✓</span><h2>Работа отправлена</h2><p>Отправлена {{ formatDate(detail.submission.submitted_at, true) }}. Повторная сдача по заданию не предусмотрена.</p><StatusBadge :status="detail.submission.status" :labels="studentLabels" /><small>Результат появится в списке заданий, когда ревьюер опубликует его</small></aside>
-        <aside v-else class="card submit-card"><span class="card-icon blue">↗</span><h2>Сдать работу</h2><p>Укажите ссылку на публичный GitHub-репозиторий. После отправки мы сохраним снапшот.</p><label>Ссылка на репозиторий<input v-model="sourceUrl" placeholder="https://github.com/..." /></label><button class="primary full" @click="submit">Отправить на проверку</button><small>После отправки ссылка будет зафиксирована</small></aside>
+        <aside v-else class="card submit-card"><span class="card-icon blue">↗</span><h2>Сдать работу</h2><p>Укажите ссылку на публичный GitHub-репозиторий. После отправки мы сохраним снапшот.</p><label>Ссылка на репозиторий<input v-model="sourceUrl" placeholder="https://github.com/..." /></label><button class="primary full submit-button" :class="`is-${submitState}`" :disabled="submitState !== 'idle'" @click="submit"><span class="submit-face">Отправить на проверку</span><span class="submit-face" aria-hidden="true"><i class="submit-spinner" />Отправляем…</span><span class="submit-face" aria-hidden="true"><i class="submit-check">✓</i>Отправлено</span></button><small>После отправки ссылка будет зафиксирована</small></aside>
       </div>
     </template>
 

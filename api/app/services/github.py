@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 from ..config import settings
 
 
-MAX_ARCHIVE_BYTES = 12 * 1024 * 1024
 MAX_FILE_BYTES = 350 * 1024
 SECTION_SEPARATOR = "\n\n---\n\n"
 TRUNCATION_NOTE = "\n[Файл обрезан по лимиту снапшота]"
@@ -210,13 +209,11 @@ def fetch_github_snapshot(url: str) -> GithubSnapshot:
     )
     try:
         with urllib.request.urlopen(request, timeout=25) as response:
-            archive = response.read(MAX_ARCHIVE_BYTES + 1)
+            archive = response.read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             raise GithubSnapshotError("Репозиторий не найден или не является публичным") from exc
         raise GithubSnapshotError(f"GitHub вернул ошибку {exc.code}") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise GithubSnapshotError("Не удалось загрузить репозиторий с GitHub") from exc
-    if len(archive) > MAX_ARCHIVE_BYTES:
-        raise GithubSnapshotError("Архив репозитория превышает лимит 12 МБ")
     return build_snapshot(archive)
