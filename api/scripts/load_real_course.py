@@ -33,7 +33,11 @@ from sqlalchemy import select  # noqa: E402
 
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import (  # noqa: E402
+    AiSignal,
     AiStatus,
+    BlitzSession,
+    BlitzStatus,
+    ReviewItem,
     Assignment,
     Base,
     Course,
@@ -51,7 +55,8 @@ from app.models import (  # noqa: E402
 )
 from app.real_course import TASKS  # noqa: E402
 from app.services.level_agreement import LEVEL_NAMES, Work, by_task, overall  # noqa: E402
-from app.services.review_pipeline import run_review  # noqa: E402
+from app.synthetic_decisions import Judgement, calibrate  # noqa: E402
+from app.services.review_pipeline import blitz_questions_with_retries, run_review  # noqa: E402
 
 DATA = ROOT / "data" / "real_course"
 
@@ -89,6 +94,23 @@ STUDENTS = {
         ("student9@demo.local", "Варвара Гусева"),
     ),
 }
+
+def schedule(index: int, now: datetime) -> tuple[datetime, datetime]:
+    """Когда задание выдали и когда срок. Один источник дат на загрузку и сдвиг.
+
+    Курс укладывается в последние полтора месяца и доходит до сегодня: иначе вся
+    активность оказывается старше недели, и недельные срезы дашборда показывают
+    ноль — кабинет выглядит заброшенным, хотя данные в нём есть."""
+
+    opened = now - timedelta(days=38 - index * 3)
+    return opened, opened + timedelta(days=14)
+
+
+def sent_at(deadline: datetime, now: datetime, order: int) -> datetime:
+    """Когда студент сдал. Не позже, чем сейчас: работ из будущего не бывает."""
+
+    return min(deadline, now - timedelta(hours=6)) - timedelta(hours=30 + order * 7)
+
 
 def wipe(db) -> None:
     for table in reversed(Base.metadata.sorted_tables):
@@ -158,8 +180,7 @@ def load(db, *, now: datetime) -> int:
     created = 0
     refreshed: list[str] = []
     for index, task in enumerate(TASKS):
-        opened = now - timedelta(days=45 - index * 3)
-        deadline = opened + timedelta(days=14)
+        opened, deadline = schedule(index, now)
         assignment = db.scalar(
             select(Assignment).where(
                 Assignment.course_id == course.id, Assignment.title == task.title
@@ -219,7 +240,7 @@ def load(db, *, now: datetime) -> int:
                 )
             ):
                 continue
-            submitted_at = deadline - timedelta(hours=30 + order * 7)
+            submitted_at = sent_at(deadline, now, order)
             submission = Submission(
                 assignment_id=assignment.id,
                 student_id=student.id,
@@ -330,6 +351,222 @@ def review_all(db) -> None:
     print(f"\nПроверено: {ok}. С ошибкой: {failed}.")
 
 
+def reschedule(db, *, now: datetime) -> None:
+    """Пересчитать все даты курса от сегодняшнего дня.
+
+    Загруженный однажды курс со временем «уезжает в прошлое»: недельные срезы
+    пустеют, и дашборд выглядит так, будто на курсе ничего не происходит.
+    Пересчёт идёт по той же формуле, что и загрузка, поэтому его можно
+    запускать сколько угодно раз — результат зависит только от даты."""
+
+    moved = 0
+    for index, task in enumerate(TASKS):
+        assignment = db.scalar(select(Assignment).where(Assignment.title == task.title))
+        if assignment is None:
+            continue
+        opened, deadline = schedule(index, now)
+        assignment.published_at = opened
+        assignment.created_at = opened
+        assignment.deadline_at = deadline
+        for rubric in db.scalars(
+            select(RubricVersion).where(RubricVersion.assignment_id == assignment.id)
+        ):
+            rubric.published_at = opened
+
+        submissions = list(
+            db.scalars(
+                select(Submission)
+                .where(Submission.assignment_id == assignment.id)
+                .order_by(Submission.submitted_at)
+            )
+        )
+        for order, submission in enumerate(submissions):
+            submitted = sent_at(deadline, now, order)
+            submission.submitted_at = submitted
+            submission.is_overdue = submitted > deadline
+            snapshot = db.scalar(
+                select(Snapshot).where(Snapshot.submission_id == submission.id)
+            )
+            if snapshot:
+                snapshot.fetched_at = submitted
+            for handover in db.scalars(
+                select(ReviewAssignment).where(
+                    ReviewAssignment.submission_id == submission.id
+                )
+            ):
+                handover.created_at = submitted + timedelta(minutes=10)
+                if handover.approved_at is not None:
+                    handover.approved_at = submitted + timedelta(hours=3)
+            review = db.scalar(select(Review).where(Review.submission_id == submission.id))
+            if review:
+                review.created_at = submitted + timedelta(minutes=2)
+                if review.completed_at is not None:
+                    review.completed_at = submitted + timedelta(hours=18 + (order % 7) * 4)
+            for row in db.scalars(
+                select(StatusHistory).where(StatusHistory.submission_id == submission.id)
+            ):
+                row.created_at = (
+                    submitted
+                    if row.to_status == SubmissionStatus.SUBMITTED
+                    else (review.completed_at if review and review.completed_at else submitted)
+                )
+            moved += 1
+    db.commit()
+    print(f"Даты пересчитаны от {now:%d.%m.%Y}: работ {moved}.")
+
+
+def complete(db, *, keep_open: int) -> None:
+    """Закрыть проверку по старым заданиям: ревьюер принял решение по критериям.
+
+    Решения выводятся из разметки кейсодателя (см. `app/synthetic_decisions`), а
+    не выдумываются: иначе «доля согласия с AI» и «критерии с частыми правками»
+    показывали бы ровный шум. `keep_open` последних заданий остаются в работе —
+    без них пустеет очередь ревьюера, а это половина кабинета.
+    """
+
+    titles = [task.title for task in TASKS]
+    closing = set(titles[: max(len(titles) - keep_open, 0)])
+
+    rows = db.execute(
+        select(Review, Submission, Snapshot, Assignment)
+        .join(Submission, Submission.id == Review.submission_id)
+        .join(Assignment, Assignment.id == Submission.assignment_id)
+        .join(Snapshot, Snapshot.submission_id == Submission.id)
+        .where(Review.ai_status == AiStatus.READY)
+        .order_by(Submission.submitted_at)
+    ).all()
+
+    closed = changed = accepted = 0
+    for order, (review, submission, snapshot, assignment) in enumerate(rows):
+        if assignment.title not in closing or submission.status == SubmissionStatus.COMPLETED:
+            continue
+        level = (snapshot.parsed_facts or {}).get("expert_level", "")
+        items = {item.criterion_key: item for item in review.items}
+        decisions = calibrate(
+            [
+                Judgement(
+                    key=item.criterion_key,
+                    ai_score=item.ai_score or 0.0,
+                    max_score=item.max_score,
+                    confidence=item.confidence or "medium",
+                )
+                for item in review.items
+            ],
+            level=level,
+        )
+        if not decisions:
+            continue
+        for decision in decisions:
+            item = items[decision.key]
+            item.reviewer_action = (
+                ReviewerAction.ACCEPTED
+                if decision.action == "accepted"
+                else ReviewerAction.CHANGED
+            )
+            item.final_score = decision.final_score
+            item.reviewer_comment = decision.comment
+            if decision.action == "accepted":
+                accepted += 1
+            else:
+                changed += 1
+
+        assignment_row = db.scalar(
+            select(ReviewAssignment).where(
+                ReviewAssignment.submission_id == submission.id,
+                ReviewAssignment.is_active.is_(True),
+            )
+        )
+        review.final_score = round(sum(d.final_score for d in decisions), 2)
+        review.final_feedback = review.draft_feedback
+        review.completed_by = assignment_row.reviewer_id if assignment_row else None
+        review.completed_at = submission.submitted_at + timedelta(hours=18 + (order % 7) * 4)
+        # Пометка в разборе: решения по этой работе достроены, а не приняты
+        # живым ревьюером. Без неё демонстрационные данные со временем
+        # становятся неотличимы от настоящих.
+        review.raw_result = {**(review.raw_result or {}), "reviewer_decisions": "derived"}
+        submission.status = SubmissionStatus.COMPLETED
+        db.add(
+            StatusHistory(
+                submission_id=submission.id,
+                from_status=SubmissionStatus.IN_REVIEW,
+                to_status=SubmissionStatus.COMPLETED,
+                actor_id=review.completed_by,
+                comment="Проверка завершена",
+                created_at=review.completed_at,
+            )
+        )
+        closed += 1
+    db.commit()
+    share = round(100 * accepted / (accepted + changed), 1) if accepted + changed else None
+    print(
+        f"Закрыто работ: {closed}. Решений по критериям: принято {accepted}, "
+        f"изменено {changed}" + (f" (согласие {share}%)." if share is not None else ".")
+    )
+
+
+def send_blitz(db, *, limit: int) -> None:
+    """Отправить дополнительные вопросы там, где разбор усомнился в понимании.
+
+    Повод не выдуман: берутся работы, по которым модель сама выставила сигнал
+    `understanding_risk` уровня medium или high, — то есть ровно те, где живой
+    ревьюер и стал бы переспрашивать. Вопросы генерирует та же модель и тем же
+    вызовом, что и кнопка в кабинете; заготовленных текстов здесь нет, иначе
+    студенту прилетели бы вопросы про чужую работу."""
+
+    candidates = list(
+        db.execute(
+            select(Review, Submission, Snapshot)
+            .join(Submission, Submission.id == Review.submission_id)
+            .join(Snapshot, Snapshot.submission_id == Submission.id)
+            .join(AiSignal, AiSignal.review_id == Review.id)
+            .where(
+                Submission.status == SubmissionStatus.IN_REVIEW,
+                AiSignal.kind == "understanding_risk",
+                AiSignal.level.in_(["medium", "high"]),
+            )
+            .order_by(Submission.submitted_at)
+        ).unique()
+    )[:limit]
+
+    print(f"Работ с сомнением в понимании: {len(candidates)}")
+    for review, submission, snapshot in candidates:
+        if db.scalar(select(BlitzSession.id).where(BlitzSession.review_id == review.id)):
+            continue
+        try:
+            response = blitz_questions_with_retries(
+                assignment=submission.assignment, snapshot=snapshot, count=3, focus=[]
+            )
+        except Exception as error:  # noqa: BLE001
+            print(f"  вопросы не составлены: {str(error)[:70]}")
+            continue
+        sent = submission.submitted_at + timedelta(hours=20)
+        db.add(
+            BlitzSession(
+                review_id=review.id,
+                status=BlitzStatus.SENT,
+                questions=[question.model_dump() for question in response.result.questions],
+                sent_at=sent,
+                due_at=sent + timedelta(hours=48),
+            )
+        )
+        submission.status = SubmissionStatus.BLITZ_SENT
+        db.add(
+            StatusHistory(
+                submission_id=submission.id,
+                from_status=SubmissionStatus.IN_REVIEW,
+                to_status=SubmissionStatus.BLITZ_SENT,
+                actor_id=review.completed_by,
+                comment="Отправлены дополнительные вопросы",
+                created_at=sent,
+            )
+        )
+        db.commit()
+        print(
+            f"  вопросов {len(response.result.questions)} · "
+            f"{submission.assignment.title[:44]}"
+        )
+
+
 def report(db) -> None:
     """Сравнить баллы модели с разметкой кейсодателя."""
 
@@ -391,6 +628,25 @@ def main() -> int:
         "--rerun", metavar="SLUG", help="сбросить разбор задания и проверить заново"
     )
     parser.add_argument("--report", action="store_true", help="сравнить баллы с разметкой")
+    parser.add_argument(
+        "--reschedule", action="store_true", help="пересчитать даты курса от сегодняшнего дня"
+    )
+    parser.add_argument(
+        "--blitz",
+        nargs="?",
+        type=int,
+        const=4,
+        metavar="N",
+        help="отправить дополнительные вопросы по N работам с сомнением в понимании",
+    )
+    parser.add_argument(
+        "--complete",
+        nargs="?",
+        type=int,
+        const=3,
+        metavar="KEEP_OPEN",
+        help="закрыть проверку, оставив в работе последние KEEP_OPEN заданий (по умолчанию 3)",
+    )
     args = parser.parse_args()
 
     if not DATA.exists():
@@ -402,7 +658,13 @@ def main() -> int:
             Base.metadata.create_all(bind=engine)
             wipe(db)
             print("База очищена.")
-        if not args.review_only and not args.report:
+        if (
+        not args.review_only
+        and not args.report
+        and args.complete is None
+        and not args.reschedule
+        and args.blitz is None
+    ):
             created = load(db, now=datetime.now(UTC))
             print(f"Загружено: заданий {len(TASKS)}, новых работ {created}.")
         if args.rerun:
@@ -424,7 +686,13 @@ def main() -> int:
             print(f"Сброшено разборов: {count} по заданию «{task.title}».")
         if args.review or args.review_only or args.rerun:
             review_all(db)
-        if args.report or args.review or args.review_only:
+        if args.complete is not None:
+            complete(db, keep_open=args.complete)
+        if args.reschedule:
+            reschedule(db, now=datetime.now(UTC))
+        if args.blitz is not None:
+            send_blitz(db, limit=args.blitz)
+        if args.report or args.review or args.review_only or args.complete is not None:
             report(db)
     return 0
 
