@@ -196,7 +196,7 @@ onUnmounted(() => {
       <button class="back" @click="emit('navigate', 'student-assignments')">← Все задания</button>
       <div class="page-heading compact"><div><h1>{{ detail.title }}</h1><p>{{ detail.course }} · дедлайн {{ formatDate(detail.deadline_at, true) }}</p></div></div>
       <div class="two-columns">
-        <article class="card prose-card"><h2>Условие</h2><MarkdownText :text="detail.statement" /><h2>Критерии оценки</h2><div v-for="criterion in detail.rubric" :key="criterion.key" class="criterion-short"><span>✓</span><b>{{ criterion.title }}</b><em>{{ criterion.max_score }} б.</em></div></article>
+        <article class="card prose-card"><h2>Условие</h2><MarkdownText :text="detail.statement" /><h2>Критерии оценки</h2><div v-for="criterion in detail.rubric" :key="criterion.key" class="criterion-short"><span>✓</span><b><MarkdownText inline :text="criterion.title" /></b><em>{{ criterion.max_score }} б.</em></div></article>
         <!-- Работа сдаётся один раз. По «назад» сюда можно вернуться уже после
              отправки — тогда вместо формы показываем, что с работой сейчас. -->
         <aside v-if="detail.submission" class="card submit-card"><span class="card-icon blue">✓</span><h2>Работа отправлена</h2><p>Отправлена {{ formatDate(detail.submission.submitted_at, true) }}. Повторная сдача по заданию не предусмотрена.</p><StatusBadge :status="detail.submission.status" :labels="studentLabels" /><small>Результат появится в списке заданий, когда ревьюер опубликует его</small></aside>
@@ -207,7 +207,7 @@ onUnmounted(() => {
     <template v-else-if="mode === 'result' && result">
       <button class="back" @click="emit('navigate', 'student-assignments')">← Все задания</button>
       <div class="result-hero"><div><span class="eyebrow">РАБОТА ПРОВЕРЕНА</span><h1>{{ result.submission.assignment }}</h1><p>Ревьюер подтвердил результат и опубликовал обратную связь</p></div><div class="big-score"><b>{{ result.review.final_score }}</b><small v-if="result.review.max_score != null">из {{ result.review.max_score }}</small></div></div>
-      <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b>{{ criterion.title }}</b><MarkdownText :text="criterion.comment" /></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2><MarkdownText :text="result.review.final_feedback" /><div class="human-note"><span>✓</span>Подтверждено ревьюером</div></aside></div>
+      <div class="two-columns result-grid"><article class="card"><h2>Результат по критериям</h2><div v-for="criterion in result.criteria" :key="criterion.title" class="result-item"><div><b><MarkdownText inline :text="criterion.title" /></b><MarkdownText :text="criterion.comment" /></div><strong>{{ criterion.score }} / {{ criterion.max_score }}</strong></div></article><aside class="card feedback-card"><span class="quote">“</span><h2>Обратная связь</h2><MarkdownText :text="result.review.final_feedback" /><div class="human-note"><span>✓</span>Подтверждено ревьюером</div></aside></div>
     </template>
 
     <!-- Работа по адресу ещё грузится. Кнопка «назад» здесь не для красоты:
@@ -228,7 +228,7 @@ onUnmounted(() => {
       <p class="neutral-note">Это обычная часть проверки: ответьте своими словами, опираясь на решение.</p>
       <details class="telemetry-notice"><summary>Что фиксируется, пока вы отвечаете</summary><p>{{ session.telemetry_notice }}</p></details>
       <label v-for="(question, index) in session.questions" :key="question.id" class="question-field">
-        <b>{{ index + 1 }}. {{ question.text }}</b>
+        <b>{{ index + 1 }}. <MarkdownText inline :text="question.text" /></b>
         <textarea
           v-model="answers[question.id]"
           rows="3"
