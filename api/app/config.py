@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     feature_analytics: bool = True
     feature_blitz: bool = True
     feature_ai_detection: bool = True
-    feature_course_debt: bool = False
+    feature_course_debt: bool = True
     feature_telegram: bool = False
 
     def feature_flags(self) -> dict[str, bool]:
@@ -80,10 +80,10 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Разделы, которые в прототипе стоят на фикстурах. Интерфейс обязан показывать
-# на них бейдж «демо-данные» — см. §10 проектного решения. Дашборд и аналитика
-# из списка ушли: они считаются по живым записям, а сколько из них демо-фикстуры,
-# экран показывает отдельной строкой (`demo_reviews` в ответе аналитики).
-DEMO_DATA_SECTIONS = ["course_debt"]
+# на них бейдж «демо-данные» — см. §10 проектного решения. Список пуст: последним
+# ушёл образовательный долг — он считается по живым работам, ревью и прогонам, а
+# там, где наблюдений мало, честно говорит об этом вместо вывода.
+DEMO_DATA_SECTIONS = []
 
 # Пока модули не приехали, кабинет работает на моке в том же контракте, что и
 # настоящий пайплайн. Блиц отсюда ушёл: вопросы генерирует модель по конкретному

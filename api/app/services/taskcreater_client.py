@@ -66,8 +66,16 @@ class TaskCreaterClient:
             },
         )
 
-    def assist_criterion(self, *, title: str, max_points: float, student_hint: str = "",
-                         description: str = "", task_context: dict | None = None) -> dict:
+    def assist_criterion(
+        self,
+        *,
+        title: str = "",
+        max_points: float,
+        student_hint: str = "",
+        description: str = "",
+        task_context: dict | None = None,
+        existing: list[str] | None = None,
+    ) -> dict:
         return self._request(
             "POST",
             "/assist/criterion",
@@ -77,6 +85,7 @@ class TaskCreaterClient:
                 "student_hint": student_hint,
                 "description": description,
                 "task_context": task_context or {},
+                "existing": existing or [],
             },
         )
 

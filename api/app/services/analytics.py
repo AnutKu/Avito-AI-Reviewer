@@ -127,6 +127,9 @@ class ItemFact:
     action: str
     reviewer_id: UUID | None = None
     completed_at: datetime | None = None
+    # Нужен разбору образовательного долга: там вопрос не «как критерий ведёт
+    # себя на курсе», а «что происходит с ним внутри конкретного задания».
+    assignment_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -170,7 +173,7 @@ def _median(values: list[float]) -> float | None:
     return round((ordered[mid - 1] + ordered[mid]) / 2, 1)
 
 
-def _share(part: float, whole: float) -> float:
+def share(part: float, whole: float) -> float:
     """Доля в процентах. Ноль знаменателя — это 0%, а не деление на ноль."""
 
     return round(part / whole * 100, 1) if whole else 0.0
@@ -213,7 +216,7 @@ def agreement(items: list[ItemFact]) -> dict:
         "accepted": accepted,
         "changed": changed,
         "rejected": rejected,
-        "rate": _share(accepted, len(decided)),
+        "rate": share(accepted, len(decided)),
         "avg_ai": avg_ai,
         "avg_final": avg_final,
         # >0 — ревьюеры в среднем добавляют баллы, <0 — AI завышает.
@@ -255,7 +258,7 @@ def overview(
         "assignments": assignments,
         "expected": expected,
         "submitted": len(works),
-        "submission_rate": _share(len(works), expected),
+        "submission_rate": share(len(works), expected),
         "completed": len(completed),
         "in_progress": sum(
             1
@@ -270,7 +273,7 @@ def overview(
         "avg_review_hours": _mean(review),
         "avg_score": _mean(scores),
         "avg_percent": _mean(percents),
-        "pass_rate": _share(sum(verdicts), len(verdicts)),
+        "pass_rate": share(sum(verdicts), len(verdicts)),
         "ai_agreement": agreement(items)["rate"],
         "completed_7d": len(recent),
         "completed_prev_7d": len(previous),
@@ -290,7 +293,7 @@ def funnel(works: list[WorkFact]) -> list[dict]:
         counts[work.status] += 1
     total = len(works)
     return [
-        {"status": status, "count": counts.get(status, 0), "share": _share(counts.get(status, 0), total)}
+        {"status": status, "count": counts.get(status, 0), "share": share(counts.get(status, 0), total)}
         for status in SubmissionStatus
     ]
 
@@ -340,22 +343,29 @@ def weekly(
             "completed": completed[key],
             "avg_lead_hours": _mean(lead[key]),
             "decided": decided[key],
-            "agreement": _share(accepted[key], decided[key]) if decided[key] else None,
+            "agreement": share(accepted[key], decided[key]) if decided[key] else None,
         }
         for key in keys
     ]
 
 
-def criteria_report(items: list[ItemFact]) -> list[dict]:
-    """Критерии, которые ревьюеры правят чаще всего, — кандидаты на переформулировку."""
+def criteria_report(items: list[ItemFact], titles: dict[UUID, str] | None = None) -> list[dict]:
+    """Критерии, которые ревьюеры правят чаще всего, — кандидаты на переформулировку.
 
-    groups: dict[str, list[ItemFact]] = defaultdict(list)
+    Группировка по паре «задание + критерий», а не по одному ключу: ключи
+    слагаются из названий, и «выводы» встречаются в трёх заданиях сразу. Слитые
+    в одну строку, они давали усреднённое число, по которому нельзя ни понять,
+    что чинить, ни дойти до самого критерия.
+    """
+
+    titles = titles or {}
+    groups: dict[tuple[UUID | None, str], list[ItemFact]] = defaultdict(list)
     for item in items:
         if item.action in DECIDED_ACTIONS:
-            groups[item.criterion_key or item.criterion_title].append(item)
+            groups[(item.assignment_id, item.criterion_key or item.criterion_title)].append(item)
 
     rows = []
-    for key, group in groups.items():
+    for (assignment_id, key), group in groups.items():
         changed = sum(1 for item in group if item.action in CORRECTED_ACTIONS)
         finals = [item.final_score for item in group if item.final_score is not None]
         ai_scores = [item.ai_score for item in group if item.final_score is not None]
@@ -365,15 +375,17 @@ def criteria_report(items: list[ItemFact]) -> list[dict]:
             {
                 "key": key,
                 "title": group[0].criterion_title,
+                "assignment_id": str(assignment_id) if assignment_id else None,
+                "assignment": titles.get(assignment_id, ""),
                 "reviews": len(group),
                 "changed": sum(1 for item in group if item.action == ReviewerAction.CHANGED),
                 "rejected": sum(1 for item in group if item.action == ReviewerAction.REJECTED),
-                "correction_rate": _share(changed, len(group)),
+                "correction_rate": share(changed, len(group)),
                 "max_score": max_score,
                 "avg_ai": avg_ai,
                 "avg_final": avg_final,
                 "delta": None if avg_ai is None else round(avg_final - avg_ai, 1),
-                "avg_percent": None if avg_final is None else _share(avg_final, max_score),
+                "avg_percent": None if avg_final is None else share(avg_final, max_score),
             }
         )
     rows.sort(key=lambda row: (-row["correction_rate"], -row["reviews"], row["title"]))
@@ -504,7 +516,7 @@ def performance(
                         1 for cell in submitted if cell["status"] == "completed"
                     ),
                     "avg_percent": _mean(percents),
-                    "pass_rate": _share(sum(verdicts), len(verdicts)),
+                    "pass_rate": share(sum(verdicts), len(verdicts)),
                     "overdue": sum(1 for cell in submitted if cell["is_overdue"]),
                 },
             }
@@ -533,9 +545,9 @@ def performance(
             "expected": expected,
             "submitted": submitted,
             "not_submitted": expected - submitted,
-            "submission_rate": _share(submitted, expected),
+            "submission_rate": share(submitted, expected),
             "avg_percent": _mean(all_percents),
-            "pass_rate": _share(sum(all_verdicts), len(all_verdicts)),
+            "pass_rate": share(sum(all_verdicts), len(all_verdicts)),
             "at_risk": sum(
                 1
                 for row in rows
@@ -557,7 +569,7 @@ def _course(db: Session, course_id: UUID | None) -> Course | None:
     return db.scalar(select(Course).order_by(Course.created_at))
 
 
-def _published(db: Session, course_id: UUID | None) -> list[Assignment]:
+def published_assignments(db: Session, course_id: UUID | None) -> list[Assignment]:
     query = select(Assignment).where(Assignment.published_at.is_not(None))
     if course_id:
         query = query.where(Assignment.course_id == course_id)
@@ -632,12 +644,51 @@ def collect_works(db: Session, assignments: list[Assignment]) -> list[WorkFact]:
     return list(facts.values())
 
 
+# Ниже какого числа решений доля согласия ничего не значит: одно принятое
+# решение — это «100%», и показать его рядом с сотней настоящих значит соврать.
+MIN_DECIDED_FOR_AGREEMENT = 3
+
+
+def agreement_by_assignment(db: Session, assignments: list[Assignment]) -> dict[UUID, dict]:
+    """Доля согласия ревьюеров с AI — по каждому заданию отдельно.
+
+    Возвращает и долю, и число решений, на которых она посчитана: без второго
+    первое невозможно взвесить. Пока решений мало, доля не считается вовсе —
+    вместо неё едет None, и экран говорит «мало данных», а не показывает 100%.
+    """
+
+    if not assignments:
+        return {}
+    rows = db.execute(
+        select(
+            Submission.assignment_id,
+            func.count(),
+            func.count(ReviewItem.id).filter(ReviewItem.reviewer_action == ReviewerAction.ACCEPTED),
+        )
+        .join(Review, Review.id == ReviewItem.review_id)
+        .join(Submission, Submission.id == Review.submission_id)
+        .where(
+            Submission.assignment_id.in_([item.id for item in assignments]),
+            ReviewItem.reviewer_action.in_(tuple(DECIDED_ACTIONS)),
+        )
+        .group_by(Submission.assignment_id)
+    ).all()
+    return {
+        assignment_id: {
+            "decided": decided,
+            "accepted": accepted,
+            "rate": share(accepted, decided) if decided >= MIN_DECIDED_FOR_AGREEMENT else None,
+        }
+        for assignment_id, decided, accepted in rows
+    }
+
+
 def collect_items(db: Session, assignments: list[Assignment]) -> list[ItemFact]:
     if not assignments:
         return []
     ids = [assignment.id for assignment in assignments]
     rows = db.execute(
-        select(ReviewItem, Review.completed_by, Review.completed_at)
+        select(ReviewItem, Review.completed_by, Review.completed_at, Submission.assignment_id)
         .join(Review, Review.id == ReviewItem.review_id)
         .join(Submission, Submission.id == Review.submission_id)
         .where(Submission.assignment_id.in_(ids))
@@ -652,8 +703,9 @@ def collect_items(db: Session, assignments: list[Assignment]) -> list[ItemFact]:
             action=item.reviewer_action,
             reviewer_id=completed_by,
             completed_at=completed_at,
+            assignment_id=assignment_id,
         )
-        for item, completed_by, completed_at in rows
+        for item, completed_by, completed_at, assignment_id in rows
     ]
 
 
@@ -693,7 +745,7 @@ def course_report(
 
     now = datetime.now(UTC)
     course = _course(db, course_id)
-    assignments = _published(db, course.id if course else None)
+    assignments = published_assignments(db, course.id if course else None)
     works = collect_works(db, assignments)
     items = collect_items(db, assignments)
     students = _students(db, {assignment.course_id for assignment in assignments})
@@ -724,7 +776,7 @@ def course_report(
         report["quality"] = {
             "agreement": agreement(items),
             "weekly": weekly(works, items, now=now),
-            "criteria": criteria_report(items),
+            "criteria": criteria_report(items, {item.id: item.title for item in assignments}),
             "ai_runs": _ai_runs(works),
         }
     return report
@@ -740,7 +792,7 @@ def _ai_runs(works: list[WorkFact]) -> dict:
         "ready": counts.get("ready", 0),
         "failed": counts.get("failed", 0),
         "pending": counts.get("pending", 0) + counts.get("running", 0),
-        "ready_rate": _share(counts.get("ready", 0), total),
+        "ready_rate": share(counts.get("ready", 0), total),
     }
 
 
@@ -748,7 +800,7 @@ def performance_report(db: Session, course_id: UUID | None = None) -> dict:
     """Данные экрана «Успеваемость студентов»."""
 
     course = _course(db, course_id)
-    assignments = _published(db, course.id if course else None)
+    assignments = published_assignments(db, course.id if course else None)
     rubrics = _rubrics(db, assignments)
     refs = [
         AssignmentRef(

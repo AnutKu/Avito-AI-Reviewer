@@ -55,15 +55,15 @@ services:
       AI_REVIEW_MAX_ATTEMPTS: ${AI_REVIEW_MAX_ATTEMPTS:-2}
       AI_REVIEW_RETRY_DELAY_SECONDS: ${AI_REVIEW_RETRY_DELAY_SECONDS:-3}
       AI_REVIEW_STALE_AFTER_SECONDS: ${AI_REVIEW_STALE_AFTER_SECONDS:-600}
-      FEATURE_DISTRIBUTION: ${FEATURE_DISTRIBUTION:-true}
-      FEATURE_RUBRIC_BUILDER: ${FEATURE_RUBRIC_BUILDER:-true}
-      FEATURE_ANALYTICS: ${FEATURE_ANALYTICS:-true}
-      FEATURE_BLITZ: ${FEATURE_BLITZ:-true}
-      FEATURE_AI_DETECTION: ${FEATURE_AI_DETECTION:-true}
       DETECTION_BLITZ_THRESHOLD: ${DETECTION_BLITZ_THRESHOLD:-70}
       DETECTION_WEIGHTS: ${DETECTION_WEIGHTS:-{}}
-      FEATURE_COURSE_DEBT: ${FEATURE_COURSE_DEBT:-false}
-      FEATURE_TELEGRAM: ${FEATURE_TELEGRAM:-false}
+      # Фиче-флаги сюда НЕ пробрасываются намеренно. Раньше они приезжали из
+      # .env, а .env не в репозитории — и стенд, поднятый месяц назад, навсегда
+      # оставался со старым набором разделов: код обновлялся, а раздел не
+      # появлялся, и понять это можно было только зайдя на сервер. Состояние
+      # продукта живёт в api/app/config.py и едет вместе с кодом. Выключить
+      # раздел на конкретном стенде по-прежнему можно — задав FEATURE_… здесь
+      # или в своём compose.override.yml, то есть осознанно.
     ports:
       - "${API_PORT:-8081}:8000"
     depends_on:

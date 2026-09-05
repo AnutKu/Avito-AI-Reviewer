@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -59,6 +60,17 @@ async def lifespan(app: FastAPI):
     recover_orphaned_reviews()
     recover_orphaned_detections()
     recover_orphaned_runs()
+    # Выключенный флагом раздел просто исчезает с экрана — в этом и смысл, но
+    # тогда «раздела нет» и «раздел не выкатили» выглядят одинаково. Строка в
+    # логе отвечает на этот вопрос за две секунды, без чтения .env по серверам.
+    flags = settings.feature_flags()
+    # Логгер uvicorn, а не свой: корневой остаётся на WARNING, и строка на
+    # INFO в него просто не дошла бы — а нужна она ровно в потоке старта.
+    logging.getLogger("uvicorn.error").info(
+        "фиче-флаги: включены [%s] · выключены [%s]",
+        ", ".join(sorted(k for k, v in flags.items() if v)) or "—",
+        ", ".join(sorted(k for k, v in flags.items() if not v)) or "—",
+    )
     yield
 
 

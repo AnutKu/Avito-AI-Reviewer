@@ -329,17 +329,31 @@ CRITERION_SYSTEM = """\
 • student_hint — ОДНА фраза для студента: что оценивается. Без перечисления
   ожидаемых ответов, иначе студент просто подгонит решение.
 
-Сохрани title, key и max_points неизменными. Язык — русский.
+Если название критерия НЕ ЗАДАНО — придумай его сам: посмотри, что в этом
+задании вообще стоит оценивать, и предложи критерий, которого ещё нет среди
+уже заведённых. Не дублируй их и не дроби один аспект на два.
+Если название задано — сохрани его без изменений. max_points не меняй никогда.
+Язык — русский.
 """
 
 
-def criterion_user(title: str, max_points: float, student_hint: str, description: str, context: dict) -> str:
+def criterion_user(
+    title: str,
+    max_points: float,
+    student_hint: str,
+    description: str,
+    context: dict,
+    existing: list[str] | None = None,
+) -> str:
     known = {k: v for k, v in (context or {}).items() if v}
+    others = ", ".join(f"«{name}»" for name in (existing or []) if name)
     return f"""\
-Критерий: {title}
+Критерий: {title or "(не задан — придумай сам)"}
 Максимум баллов: {max_points}
 Подсказка студенту сейчас: {student_hint or "(пусто)"}
 Что проверяет сейчас: {description or "(пусто)"}
+
+Уже заведённые критерии задания: {others or "(других нет)"}
 
 Задание, к которому относится критерий:
 {json.dumps(known, ensure_ascii=False, indent=1) if known else "(контекст не передан)"}

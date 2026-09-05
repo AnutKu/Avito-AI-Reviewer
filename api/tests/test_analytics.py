@@ -347,3 +347,62 @@ def test_performance_hides_draft_assignments(methodist):
 def test_analytics_is_methodist_only(reviewer):
     assert reviewer.get("/api/methodist/analytics").status_code == 403
     assert reviewer.get("/api/methodist/performance").status_code == 403
+
+
+# --- критерии с частыми правками: чей это критерий --------------------------
+
+
+def test_the_same_criterion_key_in_two_tasks_stays_two_rows():
+    """Ключи слагаются из названий, и «выводы» встречаются в трёх заданиях.
+    Слитые в строку, они дают среднее, по которому нечего чинить."""
+
+    from uuid import uuid4
+
+    from app.services.analytics import ItemFact, criteria_report
+
+    first, second = uuid4(), uuid4()
+
+    def row(assignment_id, action):
+        return ItemFact(
+            criterion_key="conclusions", criterion_title="Выводы", max_score=4.0,
+            ai_score=3.0, final_score=3.0, action=action, assignment_id=assignment_id,
+        )
+
+    rows = criteria_report(
+        [row(first, "changed"), row(first, "changed"), row(second, "accepted"), row(second, "accepted")],
+        {first: "Первое задание", second: "Второе задание"},
+    )
+    assert len(rows) == 2, "один ключ в двух заданиях — два разных критерия"
+    by_task = {r["assignment"]: r for r in rows}
+    assert by_task["Первое задание"]["correction_rate"] == 100
+    assert by_task["Второе задание"]["correction_rate"] == 0
+
+
+def test_each_row_points_at_the_task_it_belongs_to():
+    from uuid import uuid4
+
+    from app.services.analytics import ItemFact, criteria_report
+
+    task_id = uuid4()
+    rows = criteria_report(
+        [ItemFact(criterion_key="metrics", criterion_title="Метрики", max_score=4.0,
+                  ai_score=2.0, final_score=3.0, action="changed", assignment_id=task_id)],
+        {task_id: "Кейс по оттоку"},
+    )
+    assert rows[0]["assignment_id"] == str(task_id)
+    assert rows[0]["assignment"] == "Кейс по оттоку"
+
+
+def test_an_unknown_task_does_not_break_the_row():
+    """Задание могли удалить — строка обязана пережить это без падения."""
+
+    from uuid import uuid4
+
+    from app.services.analytics import ItemFact, criteria_report
+
+    rows = criteria_report(
+        [ItemFact(criterion_key="metrics", criterion_title="Метрики", max_score=4.0,
+                  ai_score=2.0, final_score=3.0, action="changed", assignment_id=uuid4())],
+        {},
+    )
+    assert rows[0]["assignment"] == "" and rows[0]["assignment_id"]
