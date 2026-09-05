@@ -51,9 +51,15 @@ const view = computed(() => {
   const [first] = props.sub
   if (!first) return 'list'
   if (first === 'run') return 'run'
+  // `topic/<тема>` — приход из образовательного долга: список, отфильтрованный
+  // по теме. Отдельного экрана он не заслуживает, это тот же банк с запросом.
+  if (first === 'topic') return 'list'
   return 'editor'
 })
 const editedId = computed(() => (view.value === 'editor' && props.sub[0] !== 'new' ? props.sub[0] : null))
+// `<id>/criterion/<key>` — приход из долга к конкретному критерию: его и
+// раскрываем, чтобы не искать глазами в списке из шести штук.
+const focusCriterion = computed(() => (props.sub[1] === 'criterion' ? decodeURIComponent(props.sub[2] || '') : ''))
 
 // --- редактор -------------------------------------------------------------
 // Следующий уровень: от «не выполнено» вверх к максимуму. Ставить каждый раз 0
@@ -69,6 +75,7 @@ function nextLevel(criterion) {
 const emptyCriterion = () => ({ key: '', title: '', max_score: 5, student_hint: '', description: '', expected_signals: [], levels: [] })
 const draft = ref(null)
 const saved = ref(null)
+const highlight = ref('')   // критерий, к которому пришли из образовательного долга
 const saving = ref(false)
 const openCriterion = ref(-1)
 
@@ -181,6 +188,7 @@ async function openEditor() {
   if (!row) { error.value = 'Задание не найдено'; go(); return }
   draft.value = toDraft(row)
   saved.value = JSON.parse(JSON.stringify(draft.value))
+  highlight.value = focusCriterion.value
   try { runs.value = await api(`/methodist/assignments/${row.id}/ai-runs`) } catch { runs.value = [] }
   watchActiveRuns()
 }
@@ -225,6 +233,7 @@ function onVisible() {
 watch(() => props.sub.join('/'), () => {
   stopPoll()
   error.value = ''
+  if (props.sub[0] === 'topic') { tab.value = 'published'; search.value = decodeURIComponent(props.sub[1] || '') }
   if (view.value === 'list') loadList()
   if (view.value === 'editor') openEditor()
   if (view.value === 'run') openRun()
@@ -586,6 +595,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             <span class="tb-total" :class="{ bad: warning }">сумма {{ total }} б.<template v-if="draft.pass_score"> · зачёт от {{ draft.pass_score }}</template></span>
           </div>
           <p v-if="warning" class="tb-warn">⚠ {{ warning }}</p>
+          <p v-if="highlight" class="cap-hint">ⓘ Вы пришли сюда из образовательного долга — подсвечен критерий, о котором шла речь.</p>
           <article v-for="(c, i) in draft.criteria" :key="i" class="tb-crit">
             <header class="tb-crit-head">
               <span class="tb-crit-no">{{ i + 1 }}</span>
@@ -884,6 +894,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 /* Критерий — карточка, а не строка таблицы: название и описание должны читаться
    целиком, иначе методист правит вслепую, а ревьюер получает обрезанный смысл. */
 .tb-crit { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #fcfcff; }
+.tb-crit.focus { border-color: var(--blue); box-shadow: 0 0 0 3px #e7f4fe; }
 .tb-crit-head { display: flex; align-items: center; gap: 10px; }
 .tb-crit-no { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 7px;
   background: #eaf5fe; color: var(--blue); font-size: var(--fs-xs); font-weight: 700; }

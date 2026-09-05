@@ -84,7 +84,9 @@ export function filterAssignments(rows, query) {
   const q = (query || '').trim().toLowerCase()
   if (!q) return rows || []
   return (rows || []).filter(r =>
-    (r.title || '').toLowerCase().includes(q) || (r.course || '').toLowerCase().includes(q))
+    (r.title || '').toLowerCase().includes(q)
+    || (r.course || '').toLowerCase().includes(q)
+    || (r.authoring?.topic || '').toLowerCase().includes(q))
 }
 
 export function sortAssignments(rows, mode) {
@@ -214,14 +216,24 @@ export const DEBT_KIND = {
   stale_task: ['🗓', 'Пора пересмотреть'],
 }
 
-export const DEBT_SEVERITY = {
-  critical: ['критично', 'high'],
-  important: ['важно', 'medium'],
-  watch: ['присмотреться', 'low'],
-}
-
 export const debtFace = (kind) => DEBT_KIND[kind]?.[0] || '•'
 export const debtGroup = (kind) => DEBT_KIND[kind]?.[1] || 'Прочее'
+
+// Куда ведёт признак долга. Вывод без пути к правке заставляет искать задание
+// руками — так же, как рекомендация прогона ведёт в редактор, ведёт и это.
+export function debtLink(target) {
+  if (!target) return null
+  if (target.assignment_id && target.criterion_key) {
+    return { path: `methodist-rubrics/${target.assignment_id}/criterion/${encodeURIComponent(target.criterion_key)}`, label: 'Открыть критерий' }
+  }
+  if (target.assignment_id) {
+    return { path: `methodist-rubrics/${target.assignment_id}`, label: 'Открыть задание' }
+  }
+  if (target.topic) {
+    return { path: `methodist-rubrics/topic/${encodeURIComponent(target.topic)}`, label: 'Задания темы' }
+  }
+  return null
+}
 
 // Что показать вместо списка, когда списка нет. Пустой экран читается как «всё
 // хорошо», а это разные вещи: чаще всего данных просто не хватило.

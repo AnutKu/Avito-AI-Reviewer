@@ -15,6 +15,7 @@ import {
   cleanCriterion,
   debtEmptyState,
   debtFace,
+  debtLink,
   criteriaTotal,
   filterAssignments,
   isDirty,
@@ -264,5 +265,38 @@ describe('образовательный долг', () => {
     const kinds = ['topic', 'repeated_error', 'criterion_corrections', 'questions', 'stale_task']
     assert.equal(new Set(kinds.map(debtFace)).size, 5)
     assert.equal(debtFace('что-то новое'), '•')
+  })
+})
+
+describe('переход из долга в правку', () => {
+  it('критерий ведёт прямо к критерию, а не просто к заданию', () => {
+    const link = debtLink({ assignment_id: 'a1', criterion_key: 'metrics' })
+    assert.equal(link.path, 'methodist-rubrics/a1/criterion/metrics')
+    assert.match(link.label, /критерий/i)
+  })
+
+  it('задание ведёт в редактор задания', () => {
+    assert.equal(debtLink({ assignment_id: 'a1' }).path, 'methodist-rubrics/a1')
+  })
+
+  it('тема ведёт в банк, отфильтрованный по теме', () => {
+    const link = debtLink({ topic: 'Работа с данными' })
+    assert.match(link.path, /^methodist-rubrics\/topic\//)
+    assert.equal(decodeURIComponent(link.path.split('/topic/')[1]), 'Работа с данными')
+  })
+
+  it('ключ критерия со слэшем не ломает адрес', () => {
+    const link = debtLink({ assignment_id: 'a1', criterion_key: 'a/b' })
+    assert.equal(link.path.split('/').length, 4, 'слэш внутри ключа должен быть закодирован')
+  })
+
+  it('без цели кнопки нет', () => {
+    assert.equal(debtLink({}), null)
+    assert.equal(debtLink(null), null)
+  })
+
+  it('поиск в банке находит задания темы — иначе переход ведёт в пустоту', () => {
+    const rows = [{ title: 'Кейс', course: 'ML', authoring: { topic: 'Работа с данными' } }]
+    assert.equal(filterAssignments(rows, 'Работа с данными').length, 1)
   })
 })

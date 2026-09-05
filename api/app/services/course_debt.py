@@ -8,9 +8,14 @@
 
 **Главное правило модуля: не говорить того, чего не видно в данных.** Каждый
 вывод считается по живым записям и снабжён порогом наблюдений; там, где
-наблюдений мало, вывод не делается вовсе — вместо него честная строка «данных
-пока мало». Низкий процент по двум работам и низкий процент по тридцати
-выглядят одинаково, и показать первый как второй значит соврать.
+наблюдений мало, вывод не делается вовсе. Низкий процент по двум работам и
+низкий процент по тридцати выглядят одинаково, и показать первый как второй
+значит соврать.
+
+Градаций важности здесь нет намеренно. Если признак прошёл порог и попал в
+список — им уже стоит заняться; делить попавшее на «важно» и «присмотреться»
+значит давать повод отложить половину. Порядок задаёт сам вид признака: сначала
+то, что бьёт по обучению, потом то, что бьёт по оценке.
 
 Два пункта из продуктовой формулировки названы здесь иначе, чем в брифе, — и
 это осознанно:
@@ -66,7 +71,9 @@ QUESTION_SHARE = 30          # % работ, после которых приш�
 STALE_DAYS = 120             # рубрику не трогали столько дней, а работы идут
 SPREAD_EPSILON = 0.01        # балл по критерию одинаков у всех — не различает
 
-SEVERITY_ORDER = {"critical": 0, "important": 1, "watch": 2}
+# Порядок показа. Сначала то, что мешает студенту учиться, потом то, что мешает
+# честно оценить, и только потом состояние самого задания.
+KIND_ORDER = ("topic", "repeated_error", "questions", "criterion_corrections", "stale_task")
 
 
 @dataclass(frozen=True)
@@ -97,7 +104,6 @@ def _item(
     detail: str,
     evidence: str,
     action: str,
-    severity: str,
     metric: float | None = None,
     target: dict | None = None,
 ) -> dict:
@@ -107,8 +113,9 @@ def _item(
         "detail": detail,
         "evidence": evidence,
         "action": action,
-        "severity": severity,
         "metric": metric,
+        # Куда идти чинить. Экран делает из этого кнопку — как из рекомендации
+        # AI-прогона: вывод без пути к правке заставляет искать задание руками.
         "target": target or {},
     }
 
@@ -118,7 +125,7 @@ def _item(
 # --------------------------------------------------------------------------- #
 
 
-def topic_gaps(works: list[WorkFact], tasks: dict[UUID, TaskFact]) -> tuple[list[dict], list[str]]:
+def topic_gaps(works: list[WorkFact], tasks: dict[UUID, TaskFact]) -> list[dict]:
     """Темы, которые массово не понимают.
 
     Считается по доле незачётов среди ПРОВЕРЕННЫХ работ темы: незавершённая
@@ -127,25 +134,19 @@ def topic_gaps(works: list[WorkFact], tasks: dict[UUID, TaskFact]) -> tuple[list
     """
 
     graded: dict[str, list[WorkFact]] = defaultdict(list)
-    untagged = 0
     for work in works:
         if work.passed is None:
             continue
         task = tasks.get(work.assignment_id)
         topic = (task.topic if task else "").strip()
-        if not topic:
-            untagged += 1
-            continue
-        graded[topic].append(work)
+        # Задание без темы в разбор по темам не попадает: иначе всё сваливается
+        # в одну кучу «без темы», и вывод получается ни о чём.
+        if topic:
+            graded[topic].append(work)
 
-    rows, notes = [], []
-    if untagged:
-        notes.append(
-            f"У {untagged} проверенных работ не указана тема задания — они в разбор по темам не вошли."
-        )
+    rows = []
     for topic, items in sorted(graded.items()):
         if len(items) < MIN_WORKS_PER_TOPIC:
-            notes.append(f"«{topic}»: проверенных работ {len(items)} — для вывода о теме мало.")
             continue
         failed = [work for work in items if work.passed is False]
         share = _pct(len(failed), len(items))
@@ -158,17 +159,16 @@ def topic_gaps(works: list[WorkFact], tasks: dict[UUID, TaskFact]) -> tuple[list
                 detail=f"Не получают зачёт {round(share)}% проверенных работ по теме.",
                 evidence=f"{len(failed)} из {len(items)} работ ниже проходного балла.",
                 action="Посмотрите, чего не хватает в объяснении темы до выдачи задания.",
-                severity="critical" if share >= 60 else "important",
                 metric=round(share),
                 target={"topic": topic},
             )
         )
-    return rows, notes
+    return rows
 
 
 def repeated_errors(
     items: list[ItemFact], tasks: dict[UUID, TaskFact]
-) -> tuple[list[dict], list[str]]:
+) -> list[dict]:
     """Задания, на которых все спотыкаются об одно и то же.
 
     «Одинаковая ошибка» здесь — один и тот же критерий, проваленный многими.
@@ -181,11 +181,9 @@ def repeated_errors(
         if item.assignment_id and item.final_score is not None:
             buckets[(item.assignment_id, item.criterion_key)].append(item)
 
-    rows, notes = [], []
-    thin = 0
+    rows = []
     for (assignment_id, key), group in buckets.items():
         if len(group) < MIN_REVIEWS_PER_CRITERION:
-            thin += 1
             continue
         failed = [x for x in group if x.max_score and x.final_score < x.max_score / 2]
         share = _pct(len(failed), len(group))
@@ -202,21 +200,16 @@ def repeated_errors(
                 evidence=f"{len(failed)} из {len(group)} проверенных работ.",
                 action="Либо это пробел в обучении, либо требование не объяснено в условии — "
                 "проверьте задание на AI-студентах.",
-                severity="critical" if share >= 70 else "important",
                 metric=round(share),
                 target={"assignment_id": str(assignment_id), "criterion_key": key},
             )
         )
-    if thin:
-        notes.append(
-            f"Ещё {thin} критериев проверены меньше {MIN_REVIEWS_PER_CRITERION} раз — их не считали."
-        )
-    return rows, notes
+    return rows
 
 
 def manual_corrections(
     items: list[ItemFact], tasks: dict[UUID, TaskFact]
-) -> tuple[list[dict], list[str]]:
+) -> list[dict]:
     """Критерии, которые ревьюер каждый раз переписывает руками.
 
     Высокая доля правок — не про плохой AI, а про формулировку, по которой два
@@ -228,11 +221,9 @@ def manual_corrections(
         if item.assignment_id and item.action in DECIDED_ACTIONS:
             buckets[(item.assignment_id, item.criterion_key)].append(item)
 
-    rows, notes = [], []
-    thin = 0
+    rows = []
     for (assignment_id, key), group in buckets.items():
         if len(group) < MIN_REVIEWS_PER_CRITERION:
-            thin += 1
             continue
         corrected = [x for x in group if x.action in CORRECTED_ACTIONS]
         share = _pct(len(corrected), len(group))
@@ -248,19 +239,14 @@ def manual_corrections(
                 f"(задание «{task.title if task else '—'}»).",
                 evidence=f"{len(corrected)} правок из {len(group)} решений.",
                 action="Уточните формулировку и пороги критерия — по ней не сходятся даже двое.",
-                severity="important" if share >= 60 else "watch",
                 metric=round(share),
                 target={"assignment_id": str(assignment_id), "criterion_key": key},
             )
         )
-    if thin:
-        notes.append(
-            f"Ещё {thin} критериев решены меньше {MIN_REVIEWS_PER_CRITERION} раз — их не считали."
-        )
-    return rows, notes
+    return rows
 
 
-def question_hotspots(tasks: dict[UUID, TaskFact]) -> tuple[list[dict], list[str]]:
+def question_hotspots(tasks: dict[UUID, TaskFact]) -> list[dict]:
     """Задания, после которых чаще всего приходится переспрашивать.
 
     Ближайшее, что кабинет знает о «материалах, после которых растут вопросы»:
@@ -269,11 +255,9 @@ def question_hotspots(tasks: dict[UUID, TaskFact]) -> tuple[list[dict], list[str
     вид, что она их анализирует, — значит выдумывать.
     """
 
-    rows, notes = [], []
-    thin = 0
+    rows = []
     for task in tasks.values():
         if task.works < MIN_WORKS_PER_TOPIC:
-            thin += 1
             continue
         flagged = max(task.questioned, task.risk_flagged)
         share = _pct(flagged, task.works)
@@ -292,19 +276,16 @@ def question_hotspots(tasks: dict[UUID, TaskFact]) -> tuple[list[dict], list[str
                 evidence="; ".join(parts) + f" из {task.works} работ.",
                 action="Проверьте, что материалы перед этим заданием закрывают то, "
                 "что оно требует, и что условие не оставляет догадок.",
-                severity="important" if share >= 50 else "watch",
                 metric=round(share),
                 target={"assignment_id": str(task.id)},
             )
         )
-    if thin:
-        notes.append(f"Ещё {thin} заданий собрали меньше {MIN_WORKS_PER_TOPIC} работ — их не считали.")
-    return rows, notes
+    return rows
 
 
 def stale_tasks(
     tasks: dict[UUID, TaskFact], items: list[ItemFact], now: datetime | None = None
-) -> tuple[list[dict], list[str]]:
+) -> list[dict]:
     """Задания, которые пора пересмотреть.
 
     Соответствие программе система проверить не может — программы у неё нет.
@@ -331,7 +312,7 @@ def stale_tasks(
         if len(values) == 1 and counts[key] >= MIN_REVIEWS_PER_CRITERION:
             flat[key[0]].append(titles[key])
 
-    rows, notes = [], []
+    rows = []
     for task in tasks.values():
         reasons = []
         stamp = task.rubric_updated_at or task.published_at
@@ -354,20 +335,20 @@ def stale_tasks(
                 + (f" Последний прогон агентов: {task.last_run_at:%d.%m.%Y}." if task.last_run_at else ""),
                 action="Откройте задание в банке и прогоните его на AI-персонах — "
                 "разбор скажет, что именно перестало работать.",
-                severity="important" if len(reasons) > 1 else "watch",
                 metric=len(reasons),
                 target={"assignment_id": str(task.id)},
             )
         )
-    return rows, notes
+    return rows
 
 
 def build_debt(
     works: list[WorkFact], items: list[ItemFact], tasks: dict[UUID, TaskFact], now: datetime | None = None
 ) -> dict:
-    """Все сигналы разом: список долгов и честный список того, что не считали."""
+    """Все сигналы разом, в порядке от «мешает учиться» к «мешает оценивать»."""
 
-    rows, notes = [], []
+    now = now or datetime.now(UTC)
+    rows = []
     for signal in (
         topic_gaps(works, tasks),
         repeated_errors(items, tasks),
@@ -375,18 +356,13 @@ def build_debt(
         question_hotspots(tasks),
         stale_tasks(tasks, items, now),
     ):
-        rows.extend(signal[0])
-        notes.extend(signal[1])
+        rows.extend(signal)
 
-    rows.sort(key=lambda row: (SEVERITY_ORDER.get(row["severity"], 9), -(row["metric"] or 0)))
-    counts = {"critical": 0, "important": 0, "watch": 0}
-    for row in rows:
-        counts[row["severity"]] = counts.get(row["severity"], 0) + 1
+    order = {kind: index for index, kind in enumerate(KIND_ORDER)}
+    rows.sort(key=lambda row: (order.get(row["kind"], 99), -(row["metric"] or 0)))
     graded = [work for work in works if work.passed is not None]
     return {
         "items": rows,
-        "counts": counts,
-        "notes": notes,
         "coverage": {
             "works": len(works),
             "graded": len(graded),
@@ -395,6 +371,10 @@ def build_debt(
             # не показывать пустой экран как «долга нет».
             "enough": len(graded) >= MIN_WORKS_PER_TOPIC,
         },
+        # Кэша нет: цифры пересчитываются на каждый запрос экрана. Методист
+        # должен знать, на какой момент он смотрит, — иначе непонятно, отражает
+        # ли список работу, проверенную минуту назад.
+        "computed_at": now.isoformat(),
     }
 
 

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
-import { DEBT_SEVERITY, debtEmptyState, debtFace } from '../../shared/taskbank'
+import { debtEmptyState, debtFace, debtLink } from '../../shared/taskbank'
 import TaskBank from './TaskBank.vue'
 
 const props = defineProps({ active: String, sub: { type: Array, default: () => [] } })
@@ -49,6 +49,11 @@ async function load(active = props.active) {
 }
 
 const debtEmpty = computed(() => debtEmptyState(report.value?.debt))
+// Кэша у долга нет: цифры пересчитываются на каждую загрузку экрана. Показываем
+// момент расчёта — иначе непонятно, попала ли в них работа, проверенная минуту назад.
+const formatTime = (value) => (value
+  ? new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+  : '—')
 const isFull = (p) => p.slots_left <= 0
 const initials = (s) => s.split(' ').map(x => x[0]).join('').slice(0, 2)
 const waitingReady = computed(() => distribution.value.filter(x => x.chosen).length)
@@ -281,29 +286,23 @@ onMounted(load)
 
       <template v-else>
         <div class="debt-counts">
-          <span v-for="(label, key) in DEBT_SEVERITY" :key="key" v-show="report.debt.counts[key]">
-            <em class="tb-sev" :class="label[1]">{{ label[0] }}</em> {{ report.debt.counts[key] }}
-          </span>
-          <span class="debt-coverage">посчитано по {{ report.debt.coverage.graded }} проверенным работам</span>
+          <b>{{ report.debt.items.length }} признак(ов)</b>
+          <span class="debt-coverage">по {{ report.debt.coverage.graded }} проверенным работам · пересчитано {{ formatTime(report.debt.computed_at) }}</span>
+          <button class="text-button" @click="load()">обновить</button>
         </div>
 
-        <article v-for="(row, i) in report.debt.items" :key="i" class="card debt-row" :class="row.severity">
+        <article v-for="(row, i) in report.debt.items" :key="i" class="card debt-row">
           <span class="debt-face">{{ debtFace(row.kind) }}</span>
           <div class="debt-body">
-            <div class="debt-head">
-              <b>{{ row.title }}</b>
-              <em class="tb-sev" :class="DEBT_SEVERITY[row.severity]?.[1]">{{ DEBT_SEVERITY[row.severity]?.[0] }}</em>
-            </div>
+            <b class="debt-title">{{ row.title }}</b>
             <p class="debt-detail">{{ row.detail }}</p>
             <p class="debt-evidence">На чём основано: {{ row.evidence }}</p>
-            <p class="debt-action">→ {{ row.action }}</p>
+            <div class="debt-foot">
+              <p class="debt-action">→ {{ row.action }}</p>
+              <button v-if="debtLink(row.target)" class="secondary" @click="$emit('navigate', debtLink(row.target).path)">{{ debtLink(row.target).label }}</button>
+            </div>
           </div>
         </article>
-
-        <details v-if="report.debt.notes.length" class="debt-notes">
-          <summary>Что не считали и почему · {{ report.debt.notes.length }}</summary>
-          <p v-for="(note, i) in report.debt.notes" :key="i">{{ note }}</p>
-        </details>
       </template>
     </template>
 
