@@ -48,6 +48,7 @@ from ..services.ai_reviewer_client import (
     AiReviewerError,
     AiReviewerUnavailable,
 )
+from ..services import late_penalty
 from ..services.review_pipeline import (
     blitz_questions_with_retries,
     expire_blitz_sessions,
@@ -103,6 +104,9 @@ class FraudDecisionPayload(BaseModel):
 
 class CompleteReview(BaseModel):
     feedback: str = Field(min_length=10)
+    # Штраф за просрочку можно не применять к конкретной работе: уважительные
+    # причины существуют, и решение о них — за человеком, а не за правилом.
+    waive_penalty: bool = False
 
 
 class RewriteFeedback(BaseModel):
@@ -248,6 +252,9 @@ def review_screen(
             "fetched_at": iso(snapshot.fetched_at) if snapshot else None,
         },
         "review": review_data(review),
+        # Что снимет правило задания, если ревьюер завершит проверку сейчас.
+        # Считается на лету: набранное меняется с каждым решением по критерию.
+        "late_penalty_preview": _penalty_preview(submission, review),
         "blitz": blitz_data(active, session_telemetry(db, active)),
         "blitz_draft": blitz_data(draft) if settings.feature_blitz else None,
         "fraud_decisions": [
@@ -599,6 +606,27 @@ def rerun_detection(
 
 
 @router.post("/reviews/{review_id}/complete")
+def _penalty_preview(submission, review) -> dict:
+    """Сколько снимет правило задания при завершении прямо сейчас."""
+
+    rule = late_penalty.parse_rule((submission.assignment.authoring or {}).get("late_penalty"))
+    days = late_penalty.late_days(submission.assignment.deadline_at, submission.submitted_at)
+    earned = sum(
+        (item.final_score if item.final_score is not None else item.ai_score) or 0
+        for item in review.items
+    )
+    amount = late_penalty.penalty(
+        rule, days, score=earned, max_score=review_max_score(review) or 0
+    )
+    return {
+        "rule": late_penalty.describe(rule),
+        "days": days,
+        "amount": amount,
+        "earned": round(earned, 2),
+        "explain": late_penalty.explain(rule, days, amount),
+    }
+
+
 def complete(
     review_id: UUID,
     payload: CompleteReview,
@@ -614,7 +642,20 @@ def complete(
         raise HTTPException(409, f"Примите решение по всем критериям: осталось {len(unresolved)}")
     if submission.status not in (SubmissionStatus.IN_REVIEW, SubmissionStatus.BLITZ_ANSWERED):
         raise HTTPException(409, "Работа пока не готова к завершению")
-    review.final_score = sum(item.final_score or 0 for item in review.items)
+    earned = sum(item.final_score or 0 for item in review.items)
+    # Штраф считается по правилу задания и вычитается из заработанного. Правила
+    # нет, работа в срок или ревьюер снял штраф — оценка не меняется вовсе.
+    rule = late_penalty.parse_rule((submission.assignment.authoring or {}).get("late_penalty"))
+    days = late_penalty.late_days(submission.assignment.deadline_at, submission.submitted_at)
+    fine = 0.0 if payload.waive_penalty else late_penalty.penalty(
+        rule, days, score=earned, max_score=review_max_score(review) or 0
+    )
+    review.late_penalty = fine
+    review.late_penalty_note = (
+        "Штраф снят ревьюером" if payload.waive_penalty and rule and days
+        else late_penalty.explain(rule, days, fine)
+    )
+    review.final_score = round(earned - fine, 2)
     review.final_feedback = payload.feedback
     review.completed_by = user.id
     review.completed_at = datetime.now(UTC)
@@ -632,6 +673,9 @@ def complete(
     return {
         "ok": True,
         "score": review.final_score,
+        "earned": earned,
+        "late_penalty": fine,
+        "late_penalty_note": review.late_penalty_note,
         "max_score": review_max_score(review),
         "status": submission.status,
     }

@@ -276,10 +276,21 @@ async function saveFraudDecision() {
   } catch (e) { error.value = e.message }
 }
 
+// Штраф за просрочку применяется по правилу задания. Снять его для конкретной
+// работы может только человек: уважительные причины бывают, а правило о них
+// ничего не знает.
+const waivePenalty = ref(false)
+const penalty = computed(() => current.value?.late_penalty_preview || null)
+const penaltyDue = computed(() => (waivePenalty.value ? 0 : penalty.value?.amount || 0))
+
 async function complete() {
   try {
-    const result = await api(`/reviewer/reviews/${current.value.review.id}/complete`, { method: 'POST', body: JSON.stringify({ feedback: feedback.value }) })
+    const result = await api(`/reviewer/reviews/${current.value.review.id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ feedback: feedback.value, waive_penalty: waivePenalty.value }),
+    })
     notice.value = `Ревью опубликовано · ${result.score}${result.max_score != null ? ` из ${result.max_score}` : ''}`
+      + (result.late_penalty ? ` (штраф за просрочку −${result.late_penalty})` : '')
     current.value.submission.status = 'completed'
   } catch (e) { error.value = e.message }
 }
@@ -593,6 +604,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <small>{{ feedback.trim() ? `${feedback.trim().length} символов` : 'черновик пуст' }}</small>
           </div>
           <MarkdownText v-if="showFeedbackPreview && feedback.trim()" class="feedback-preview" :text="feedback" />
+          <div v-if="penalty?.amount" class="penalty-box">
+            <div>
+              <b>Просрочка {{ penalty.days }} сут. → −{{ penalty.amount }} б.</b>
+              <small>{{ penalty.rule }}. По критериям {{ penalty.earned }} → итог {{ Math.round((penalty.earned - penaltyDue) * 100) / 100 }}.</small>
+            </div>
+            <label class="penalty-waive"><input v-model="waivePenalty" type="checkbox" /><span>не применять к этой работе</span></label>
+          </div>
           <div class="editor-actions"><button class="secondary" @click="rewrite">✦ Переформулировать</button><button class="primary" :disabled="current.submission.status === 'blitz_sent' || current.submission.status === 'completed'" @click="complete">Подтвердить и опубликовать</button></div>
         </section>
       </aside>

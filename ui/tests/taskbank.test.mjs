@@ -18,8 +18,11 @@ import {
   debtLink,
   criteriaTotal,
   defaultPassScore,
+  describePenalty,
   filledCriteria,
   mergeCriterion,
+  penaltyForm,
+  penaltyPayload,
   filterAssignments,
   isDirty,
   kindLabel,
@@ -357,5 +360,37 @@ describe('вставка предложения в критерий', () => {
 
   it('служебный ключ списка не уезжает в рубрику', () => {
     assert.equal(cleanCriterion({ _uid: 7, title: 'A', max_score: 3 })._uid, undefined)
+  })
+})
+
+describe('правило штрафа за просрочку', () => {
+  it('пустое «сколько снимать» означает, что штрафа нет', () => {
+    // Это обычное состояние задания, а не незаполненная форма.
+    assert.deepEqual(penaltyPayload({ per_day: '', unit: 'points' }), {})
+    assert.deepEqual(penaltyPayload({ per_day: 0 }), {})
+    assert.deepEqual(penaltyPayload(null), {})
+    assert.match(describePenalty({}), /Штраф не назначен/)
+  })
+
+  it('потолок необязателен и не едет пустым', () => {
+    assert.deepEqual(penaltyPayload({ per_day: 1, unit: 'points' }), { per_day: 1, unit: 'points' })
+    assert.equal(penaltyPayload({ per_day: 1, max_penalty: 3 }).max_penalty, 3)
+  })
+
+  it('единица приводится к известной — «бананы» не доедут до сервера', () => {
+    assert.equal(penaltyPayload({ per_day: 1, unit: 'бананы' }).unit, 'points')
+    assert.equal(penaltyPayload({ per_day: 1, unit: 'percent' }).unit, 'percent')
+  })
+
+  it('форма и правило ходят туда-обратно без потерь', () => {
+    const rule = { per_day: 1.5, unit: 'percent', max_penalty: 20 }
+    assert.deepEqual(penaltyPayload(penaltyForm(rule)), rule)
+  })
+
+  it('правило читается фразой, а не набором полей', () => {
+    assert.equal(
+      describePenalty({ per_day: 1, unit: 'points', max_penalty: 3 }),
+      '−1 б. за каждые начатые сутки просрочки, но не больше −3 б.',
+    )
   })
 })
