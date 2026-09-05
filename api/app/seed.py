@@ -1078,10 +1078,19 @@ def _ensure_people(db: Session, course: Course) -> tuple[User, list[User], dict[
     return methodist, reviewers, students
 
 
-def _ensure_course(db: Session) -> Course:
-    course = db.scalar(select(Course).order_by(Course.created_at))
+def _ensure_course(db: Session) -> Course | None:
+    """Курс, за который отвечает сев. Чужой курс он не трогает и не дополняет.
+
+    Возвращает None, если в базе есть курс, но не демонстрационный: значит,
+    кабинет наполнили настоящими данными (см. `scripts/load_real_course.py`), и
+    подмешивать к ним выдуманных студентов при следующем рестарте нельзя — с
+    `SEED_ON_START=true` это происходило бы само собой."""
+
+    course = db.scalar(select(Course).where(Course.title == COURSE_TITLE))
     if course:
         return course
+    if db.scalar(select(Course.id).limit(1)):
+        return None
     course = Course(
         title=COURSE_TITLE,
         specialization="data_science",
@@ -1133,6 +1142,9 @@ def seed_demo(db: Session) -> None:
 
     fresh = db.scalar(select(User.id).limit(1)) is None
     course = _ensure_course(db)
+    if course is None:
+        db.commit()
+        return
     methodist, reviewers, students = _ensure_people(db, course)
     now = datetime.now(UTC)
 
