@@ -10,7 +10,8 @@ import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import {
   AI_BLOCKS, PERSONA_TYPE, RUN_STATE, SEVERITY, SOLUTIONS_NOTE, criteriaTotal,
   decidedRecommendations, fieldTitle, filterAssignments, isDirty, kindLabel, kindWhy,
-  cleanCriterion, defaultPassScore, filledCriteria, mergeCriterion, openRecommendations, personaAbout, personaFace,
+  cleanCriterion, defaultPassScore, describePenalty, filledCriteria, mergeCriterion,
+  openRecommendations, penaltyForm, penaltyPayload, personaAbout, personaFace,
   personaName, publishBlockers, runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning,
   splitByPublication,
 } from '../../shared/taskbank'
@@ -94,6 +95,9 @@ const emptyCriterion = () => ({
 })
 const draft = ref(null)
 const saved = ref(null)
+// Правило штрафа за просрочку. Живёт отдельной формой из трёх полей, а в
+// задание уезжает объектом; пустое «сколько снимать» = штрафа нет.
+const penalty = ref(penaltyForm(null))
 const highlight = ref('')   // критерий, к которому пришли из образовательного долга
 const saving = ref(false)
 const openCriterion = ref(-1)
@@ -149,6 +153,7 @@ function toDraft(row) {
 function authoringPayload(a) {
   return {
     ...a,
+    late_penalty: penaltyPayload(penalty.value),
     learning_objectives: (a.learning_objectives || '').split('\n').map(s => s.trim()).filter(Boolean),
     estimated_minutes: Number(a.estimated_minutes) || null,
   }
@@ -226,6 +231,7 @@ async function openEditor() {
   if (props.sub[0] === 'new') {
     draft.value = blankDraft(); saved.value = JSON.parse(JSON.stringify(draft.value))
     passTouched.value = false; runs.value = []
+    penalty.value = penaltyForm(null)
     return
   }
   const row = rows.value.find(r => r.id === editedId.value)
@@ -234,6 +240,7 @@ async function openEditor() {
   saved.value = JSON.parse(JSON.stringify(draft.value))
   // У сохранённого задания балл уже выбран человеком — не перебиваем его.
   passTouched.value = true
+  penalty.value = penaltyForm(row.authoring?.late_penalty)
   highlight.value = focusCriterion.value
   try { runs.value = await api(`/methodist/assignments/${row.id}/ai-runs`) } catch { runs.value = [] }
   watchActiveRuns()
@@ -641,6 +648,16 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             <label>Канал сдачи<select v-model="draft.submission_channel"><option value="github">GitHub</option><option value="stepik">Stepik</option><option value="gdocs">Google Docs</option></select></label>
           </div>
           <label>Образовательная цель — чему научится студент (по строке)<textarea v-model="draft.authoring.learning_objectives" rows="3" /></label>
+
+          <div class="tb-penalty">
+            <span class="tb-crit-label">Штраф за просрочку</span>
+            <div class="af-row">
+              <label>Снимать за сутки<input v-model="penalty.per_day" type="number" min="0" step="0.5" placeholder="не штрафовать" /></label>
+              <label>В чём<select v-model="penalty.unit"><option value="points">баллах</option><option value="percent">процентах от максимума</option></select></label>
+              <label>Не больше чем<input v-model="penalty.max_penalty" type="number" min="0" step="0.5" placeholder="без потолка" /></label>
+            </div>
+            <p class="tb-side-note">{{ describePenalty(penalty) }}. Начатые сутки считаются целиком. Ревьюер увидит расчёт и сможет не применять штраф к конкретной работе.</p>
+          </div>
         </article>
 
         <article v-for="block in AI_BLOCKS" :key="block.field" class="card">
@@ -1017,6 +1034,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
   text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
 .tb-crit-proposed ul { margin: 4px 0 0 18px; color: #4b5563; }
 .tb-crit-proposed li em { font-style: normal; font-weight: 700; color: var(--blue); margin-right: 4px; }
+.tb-penalty { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .tb-pass { display: flex; align-items: center; justify-content: space-between; gap: 16px;
   margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .tb-pass b { display: block; font-size: var(--fs-sm); }
