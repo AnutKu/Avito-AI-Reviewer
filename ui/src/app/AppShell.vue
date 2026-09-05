@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 
 const props = defineProps({ user: Object, nav: Array, active: String, notifications: Array })
-const emit = defineEmits(['navigate', 'logout', 'read'])
+const emit = defineEmits(['navigate', 'logout', 'read', 'help'])
 const showNotifications = ref(false)
 
 const roleNames = { student: 'Студент', reviewer: 'Ревьюер', methodist: 'Методист' }
@@ -18,7 +18,9 @@ const roleNames = { student: 'Студент', reviewer: 'Ревьюер', metho
           <span v-if="item.demo" class="nav-demo">demo</span>
         </button>
       </nav>
-      <div class="side-help"><span>?</span><div><b>Нужна помощь?</b><small>Как работает кабинет</small></div></div>
+      <!-- Блок был просто картинкой. Теперь он делает то, что обещает: заново
+           открывает знакомство с кабинетом — единственное место, где оно есть. -->
+      <button class="side-help" @click="emit('help')"><span>?</span><div><b>Нужна помощь?</b><small>Как работает кабинет</small></div></button>
     </aside>
     <section class="workspace">
       <header class="topbar">

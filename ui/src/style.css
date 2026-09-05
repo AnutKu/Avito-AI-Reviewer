@@ -84,7 +84,8 @@ h1, h2, h3, p { margin-top: 0; }
 /* text-fill прозрачный + тень нулевого размера = глиф (в т.ч. цветной эмодзи
    «Распределение») перекрашивается в текущий цвет кнопки и следует за hover/active. */
 .nav-icon { display: grid; place-items: center; width: 22px; font-size: var(--fs-xl); -webkit-text-fill-color: transparent; text-shadow: 0 0 0 currentColor; }.nav-demo { margin-left: auto; color: #b784f8; font-size: var(--fs-2xs); text-transform: uppercase; }
-.side-help { margin-top: auto; display: flex; gap: 10px; align-items: center; padding: 14px 12px; background: #202330; border-radius: 14px; }
+.side-help { margin-top: auto; display: flex; gap: 10px; align-items: center; width: 100%; border: 0; font-family: inherit; text-align: left; cursor: pointer; padding: 14px 12px; background: #202330; border-radius: 14px; transition: background .2s ease; }
+.side-help:hover { background: #2a2e3f; }
 .side-help > span { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: #343746; color: #ccc; }
 .side-help b, .side-help small { display: block; font-size: var(--fs-xs); }.side-help small { color: #9294a2; margin-top: 3px; }
 .workspace { grid-column: 2; min-width: 0; }
