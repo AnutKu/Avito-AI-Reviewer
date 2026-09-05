@@ -52,6 +52,14 @@ DATA = Path(__file__).resolve().parent.parent / "data" / "real_course"
 # поднимается одинаково на любой машине — и без обращения к провайдеру.
 RESULTS = DATA / "ai_results.json"
 
+# Кому достаётся очередная работа. Раньше здесь был ровный круг по трём
+# ревьюерам, и на экране распределения у всех выходило одно и то же число —
+# картина, которой на живом курсе не бывает и по которой нельзя понять, работает
+# ли балансировщик вообще. Разбивка намеренно неровная: у одного ревьюера
+# нагрузка заметно выше, и «минимальная загрузка на момент назначения» в
+# объяснении наконец что-то значит.
+REVIEWER_ROTA = (0, 1, 0, 2, 0, 1, 2, 1, 0, 2, 0, 1)
+
 COURSE = "Авито Академия: разбор реальных ДЗ"
 
 
@@ -167,6 +175,7 @@ def load(db, *, now: datetime) -> dict:
     db.flush()
 
     created = 0
+    handed = 0          # сквозной счётчик выданных работ — по нему идёт ротация
     refreshed: list[str] = []
     for index, task in enumerate(TASKS):
         opened, deadline = schedule(index, now)
@@ -256,7 +265,8 @@ def load(db, *, now: datetime) -> dict:
                     },
                 )
             )
-            reviewer = reviewers[(index + order) % len(reviewers)]
+            reviewer = reviewers[REVIEWER_ROTA[handed % len(REVIEWER_ROTA)] % len(reviewers)]
+            handed += 1
             db.add(
                 ReviewAssignment(
                     submission_id=submission.id,
