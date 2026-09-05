@@ -385,12 +385,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   <section v-else-if="active === 'reviewer-review' && current" class="review-page">
     <button class="back" @click="emit('navigate', 'reviewer-queue')">← Вернуться в очередь</button>
     <div class="review-title">
-      <div><h1>{{ current.submission.student }}</h1><p>{{ current.submission.assignment }} · сдано {{ formatDate(current.submission.submitted_at, true) }}</p></div>
-      <div class="review-title-actions">
-        <button class="secondary" @click="panel = 'statement'">Условие</button>
-        <button class="secondary" @click="panel = 'criteria'">Критерии</button>
-        <StatusBadge :status="current.submission.status" />
+      <div>
+        <h1>{{ current.submission.student }}</h1><p>{{ current.submission.assignment }} · сдано {{ formatDate(current.submission.submitted_at, true) }}</p>
+        <div class="review-title-actions">
+          <button class="secondary" @click="panel = 'statement'">Условие</button>
+          <button class="secondary" @click="panel = 'criteria'">Критерии</button>
+        </div>
       </div>
+      <StatusBadge :status="current.submission.status" />
     </div>
     <div v-if="notice" class="toast-success">✓ {{ notice }}<button @click="notice = ''">×</button></div>
     <div v-if="error" class="toast-error">{{ error }}<button @click="error = ''">×</button></div>

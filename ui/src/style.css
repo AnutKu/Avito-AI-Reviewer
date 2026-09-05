@@ -278,7 +278,7 @@ h1, h2, h3, p { margin-top: 0; }
 /* Быстрый просмотр условия и критериев на экране проверки. Боковая панель, а не
    отдельный экран: разбор, черновик обратной связи и несохранённые решения по
    критериям остаются на месте. */
-.review-title-actions { display: flex; align-items: center; gap: 8px; }
+.review-title-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .review-title-actions button { padding: 8px 14px; font-size: var(--fs-xs); }
 .drawer-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: flex-end; background: rgba(23,26,40,.34); }
 .drawer { display: flex; flex-direction: column; width: min(540px,100%); height: 100%; background: #fff; border-left: 1px solid var(--line); box-shadow: -18px 0 45px rgba(23,31,51,.14); }
