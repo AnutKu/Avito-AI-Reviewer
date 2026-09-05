@@ -84,3 +84,25 @@ def test_the_scan_actually_found_calls():
     calls = ui_calls()
     assert len(calls) > 20, f"нашлось всего {len(calls)} вызовов — разбор сломан"
     assert "/methodist/ai-fill" in calls
+
+
+def test_no_route_is_bound_to_a_private_helper():
+    """Декоратор обязан стоять на ручке, а не на функции над ней.
+
+    Написан по следам живой ошибки: между `@router.post(.../complete)` и
+    `complete` вклинился приватный `_penalty_preview`, декоратор сел на него, а
+    настоящая ручка осталась незарегистрированной. Адрес при этом существовал —
+    проверка выше его находила, — но вёл в помощника с нетипизированными
+    аргументами, и публикация ревью отвечала 422 «Field required» по двум
+    query-параметрам, которых кабинет и не думал слать.
+
+    Правило простое и настоящее: имя с подчёркивания — не эндпоинт.
+    """
+
+    bound = [
+        (route.path, route.endpoint.__name__)
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/api/") and hasattr(route, "endpoint")
+    ]
+    private = [(path, name) for path, name in bound if name.startswith("_")]
+    assert not private, f"маршруты смотрят в приватные функции: {private}"

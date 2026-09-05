@@ -605,7 +605,6 @@ def rerun_detection(
     return {"review_id": str(review.id), "status": "running"}
 
 
-@router.post("/reviews/{review_id}/complete")
 def _penalty_preview(submission, review) -> dict:
     """Сколько снимет правило задания при завершении прямо сейчас."""
 
@@ -627,6 +626,7 @@ def _penalty_preview(submission, review) -> dict:
     }
 
 
+@router.post("/reviews/{review_id}/complete")
 def complete(
     review_id: UUID,
     payload: CompleteReview,

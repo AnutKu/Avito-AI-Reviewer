@@ -9,6 +9,31 @@ export function setToken(token) {
   else localStorage.removeItem(TOKEN_KEY)
 }
 
+// Одна ошибка валидации в человеческий вид: «feedback: короче 10 символов».
+// `loc` начинается с места — body, query, path; для читателя это шум, кроме
+// случая, когда имени поля больше нет вовсе.
+function fieldError(item) {
+  const where = (item.loc || []).filter(part => !['body', 'query', 'path'].includes(part)).join('.')
+  const what = item.msg || 'некорректное значение'
+  return where ? `${where}: ${what}` : what
+}
+
+/**
+ * Текст ошибки из ответа сервера.
+ *
+ * На 422 FastAPI отвечает не строкой, а СПИСКОМ ошибок по полям, и
+ * `new Error(список)` печатал «[object Object],[object Object]» — сообщение, по
+ * которому нельзя понять ни поля, ни причины. За ним однажды спрятался целиком
+ * незарегистрированный роут: публикация ревью не работала вообще, а выглядело
+ * это как невнятная ошибка ввода.
+ */
+export function errorText(data, status) {
+  const detail = data && data.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail) && detail.length) return detail.map(fieldError).join('; ')
+  return `Ошибка ${status}`
+}
+
 export async function api(path, options = {}) {
   const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers }
   const token = getToken()
@@ -16,7 +41,7 @@ export async function api(path, options = {}) {
   const response = await fetch(`/api${path}`, { ...options, headers })
   if (!response.ok) {
     const data = await response.json().catch(() => ({}))
-    throw new Error(data.detail || `Ошибка ${response.status}`)
+    throw new Error(errorText(data, response.status))
   }
   if (response.status === 204) return null
   return response.json()
