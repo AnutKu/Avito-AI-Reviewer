@@ -203,3 +203,41 @@ export function samplingNote(samples) {
   if (!samples || samples < 2) return ''
   return `Каждое решение оценено ${samples} раз(а) по одной и той же рубрике: так видно разброс самой модели — если баллы гуляют, дело не в работе студента, а в формулировке критерия.`
 }
+
+// --- образовательный долг ---------------------------------------------------
+
+export const DEBT_KIND = {
+  topic: ['📚', 'Тема не усваивается'],
+  repeated_error: ['🔁', 'Одна и та же ошибка'],
+  criterion_corrections: ['✍️', 'Критерий переписывают руками'],
+  questions: ['❓', 'Приходится переспрашивать'],
+  stale_task: ['🗓', 'Пора пересмотреть'],
+}
+
+export const DEBT_SEVERITY = {
+  critical: ['критично', 'high'],
+  important: ['важно', 'medium'],
+  watch: ['присмотреться', 'low'],
+}
+
+export const debtFace = (kind) => DEBT_KIND[kind]?.[0] || '•'
+export const debtGroup = (kind) => DEBT_KIND[kind]?.[1] || 'Прочее'
+
+// Что показать вместо списка, когда списка нет. Пустой экран читается как «всё
+// хорошо», а это разные вещи: чаще всего данных просто не хватило.
+export function debtEmptyState(debt) {
+  if (!debt) return null
+  if (!debt.coverage?.enough) {
+    return {
+      title: 'Данных пока мало',
+      text: `Проверенных работ: ${debt.coverage?.graded ?? 0}. Долг считается по завершённым проверкам — вернитесь, когда поток наберёт статистику.`,
+    }
+  }
+  if (!debt.items?.length) {
+    return {
+      title: 'Долга не видно',
+      text: 'По накопленным работам ни один из признаков не сработал. Это не гарантия — это значит, что данные пока не спорят с курсом.',
+    }
+  }
+  return null
+}

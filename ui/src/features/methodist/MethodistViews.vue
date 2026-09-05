@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
+import { DEBT_SEVERITY, debtEmptyState, debtFace } from '../../shared/taskbank'
 import TaskBank from './TaskBank.vue'
 
 const props = defineProps({ active: String, sub: { type: Array, default: () => [] } })
@@ -47,6 +48,7 @@ async function load(active = props.active) {
   } catch (e) { error.value = e.message }
 }
 
+const debtEmpty = computed(() => debtEmptyState(report.value?.debt))
 const isFull = (p) => p.slots_left <= 0
 const initials = (s) => s.split(' ').map(x => x[0]).join('').slice(0, 2)
 const waitingReady = computed(() => distribution.value.filter(x => x.chosen).length)
@@ -267,6 +269,43 @@ onMounted(load)
           <div class="insight"><span>▲</span><p><b>Что видно по данным</b>{{ loadHint }}</p></div>
         </article>
     </div>
+
+    <template v-if="report.debt">
+      <h2 class="dist-subhead">Образовательный долг</h2>
+      <p class="cap-hint">ⓘ Где курс теряет качество — по накопленным работам, ревью и прогонам агентов. Учебных материалов и программы система не видит: она показывает признаки, а решение за вами.</p>
+
+      <div v-if="debtEmpty" class="card debt-empty">
+        <h3>{{ debtEmpty.title }}</h3>
+        <p>{{ debtEmpty.text }}</p>
+      </div>
+
+      <template v-else>
+        <div class="debt-counts">
+          <span v-for="(label, key) in DEBT_SEVERITY" :key="key" v-show="report.debt.counts[key]">
+            <em class="tb-sev" :class="label[1]">{{ label[0] }}</em> {{ report.debt.counts[key] }}
+          </span>
+          <span class="debt-coverage">посчитано по {{ report.debt.coverage.graded }} проверенным работам</span>
+        </div>
+
+        <article v-for="(row, i) in report.debt.items" :key="i" class="card debt-row" :class="row.severity">
+          <span class="debt-face">{{ debtFace(row.kind) }}</span>
+          <div class="debt-body">
+            <div class="debt-head">
+              <b>{{ row.title }}</b>
+              <em class="tb-sev" :class="DEBT_SEVERITY[row.severity]?.[1]">{{ DEBT_SEVERITY[row.severity]?.[0] }}</em>
+            </div>
+            <p class="debt-detail">{{ row.detail }}</p>
+            <p class="debt-evidence">На чём основано: {{ row.evidence }}</p>
+            <p class="debt-action">→ {{ row.action }}</p>
+          </div>
+        </article>
+
+        <details v-if="report.debt.notes.length" class="debt-notes">
+          <summary>Что не считали и почему · {{ report.debt.notes.length }}</summary>
+          <p v-for="(note, i) in report.debt.notes" :key="i">{{ note }}</p>
+        </details>
+      </template>
+    </template>
 
     <template v-if="report.quality">
       <h2 class="dist-subhead">Качество проверки</h2>

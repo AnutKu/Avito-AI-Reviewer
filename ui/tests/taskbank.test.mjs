@@ -13,6 +13,8 @@ import { describe, it } from 'node:test'
 
 import {
   cleanCriterion,
+  debtEmptyState,
+  debtFace,
   criteriaTotal,
   filterAssignments,
   isDirty,
@@ -233,5 +235,34 @@ describe('критерий перед отправкой', () => {
     const clean = cleanCriterion({ title: 'Метрики', max_score: 4 })
     assert.deepEqual(clean.expected_signals, [])
     assert.deepEqual(clean.levels, [])
+  })
+})
+
+describe('образовательный долг', () => {
+  it('пустой экран и нехватка данных — разные сообщения', () => {
+    // «Долга нет» и «мы не смогли посчитать» выглядят одинаково пусто, но
+    // означают противоположное. Путать их — значит успокаивать без оснований.
+    const thin = debtEmptyState({ coverage: { enough: false, graded: 2 }, items: [] })
+    assert.match(thin.title, /Данных пока мало/)
+    assert.match(thin.text, /2/)
+
+    const clean = debtEmptyState({ coverage: { enough: true, graded: 40 }, items: [] })
+    assert.match(clean.title, /Долга не видно/)
+    assert.match(clean.text, /не гарантия/)
+  })
+
+  it('когда долг есть, заглушки нет', () => {
+    assert.equal(debtEmptyState({ coverage: { enough: true, graded: 40 }, items: [{}] }), null)
+  })
+
+  it('без данных о долге блок вообще не рисуется', () => {
+    assert.equal(debtEmptyState(null), null)
+    assert.equal(debtEmptyState(undefined), null)
+  })
+
+  it('у каждого вида долга своё лицо', () => {
+    const kinds = ['topic', 'repeated_error', 'criterion_corrections', 'questions', 'stale_task']
+    assert.equal(new Set(kinds.map(debtFace)).size, 5)
+    assert.equal(debtFace('что-то новое'), '•')
   })
 })

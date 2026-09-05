@@ -33,6 +33,7 @@ from ..serializers import (
 )
 from ..services import task_ai
 from ..services.analytics import course_report, performance_report
+from ..services.course_debt import debt_report
 from ..services.assignment import (
     assign_submission,
     auto_assign_enabled,
@@ -874,13 +875,17 @@ def analytics(
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Объединённый экран «Дашборд курса»: обзор потока + качество проверки.
+    """Аналитика курса: обзор потока, качество проверки и образовательный долг.
 
     Всё считается по живым записям. Блок `quality` приезжает только когда
-    включён фиче-флаг аналитики — вкладка исчезает, экран остаётся целым."""
+    включён фиче-флаг аналитики, `debt` — свой флаг: разбор долга опирается на
+    накопленную статистику, и на пустом курсе его лучше не показывать вовсе."""
 
     del user
-    return course_report(db, course_id, with_quality=settings.feature_analytics)
+    report = course_report(db, course_id, with_quality=settings.feature_analytics)
+    if settings.feature_course_debt:
+        report["debt"] = debt_report(db, course_id)
+    return report
 
 
 @router.get("/performance")

@@ -140,6 +140,32 @@ h1, h2, h3, p { margin-top: 0; }
 .auto-toggle input { margin-top: 2px; }
 .auto-toggle b { display: block; font-size: var(--fs-xs); }
 .auto-toggle small { display: block; margin-top: 3px; font-size: var(--fs-2xs); color: var(--muted); line-height: 1.5; }
+/* Образовательный долг: строка на признак. Каждая несёт три вещи и в этом
+   порядке — что видно, на чём основано, что с этим делать. Вывод без основания
+   выглядит как приговор, а без действия — как жалоба. */
+.debt-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 12px; font-size: var(--fs-xs); }
+.debt-coverage { color: var(--muted); }
+.debt-row { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 10px; border-left: 3px solid var(--line); }
+.debt-row.critical { border-left-color: var(--red); }
+.debt-row.important { border-left-color: #d98324; }
+.debt-face { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #f3f4f8; font-size: var(--fs-xl); line-height: 1; }
+.debt-body { flex: 1; }
+.debt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.debt-head b { font-size: var(--fs-sm); }
+.debt-detail { margin: 6px 0 0; font-size: var(--fs-xs); line-height: 1.55; }
+.debt-evidence { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-2xs); }
+.debt-action { margin: 6px 0 0; color: #6d28d9; font-size: var(--fs-xs); font-weight: 600; }
+.debt-empty { text-align: center; padding: 34px; }
+.debt-empty h3 { margin: 0 0 6px; font-size: var(--fs-md); }
+.debt-empty p { margin: 0 auto; max-width: 560px; color: var(--muted); font-size: var(--fs-xs); line-height: 1.6; }
+.debt-notes { margin: 6px 0 18px; color: var(--muted); font-size: var(--fs-2xs); }
+.debt-notes summary { cursor: pointer; }
+.debt-notes p { margin: 6px 0 0; }
+.tb-sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: var(--fs-3xs); font-weight: 700; font-style: normal; }
+.tb-sev.high { background: #fee2e2; color: #b91c1c; }
+.tb-sev.medium { background: #fef3c7; color: #92400e; }
+.tb-sev.low { background: #eef0f3; color: #4b5563; }
+
 .cap-hint { margin: 0 0 13px; padding: 9px 13px; background: #eef8ff; border: 1px solid #d5eefe; border-radius: 10px; color: #3d5566; font-size: var(--fs-xs); line-height: 1.5; }
 .cap-hint b { color: var(--blue); font-weight: 700; }
 .cap-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 13px; }
