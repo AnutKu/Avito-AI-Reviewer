@@ -49,19 +49,19 @@ h1, h2, h3, p { margin-top: 0; }
 .login-brand { display: flex; align-items: center; gap: 18px; font-weight: 800; font-size: var(--fs-2xl); max-width: 1220px; margin: 0 auto 36px; }
 .login-card { display: grid; grid-template-columns: 1.12fr .88fr; max-width: 1220px; min-height: 670px; margin: auto; background: #fff; border-radius: 32px; overflow: hidden; box-shadow: 0 25px 80px rgba(39, 43, 75, .12); }
 .login-copy { position: relative; background: #111322; padding: 76px 70px; color: white; overflow: hidden; }
-.login-copy::before { content: ''; position: absolute; inset: auto -170px -220px auto; width: 600px; height: 600px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #a548ee, #5d25d4 55%, transparent 56%); opacity: .8; }
+.login-copy::before { content: ''; position: absolute; inset: auto -170px -300px auto; width: 600px; height: 600px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #a548ee, #5d25d4 55%, transparent 56%); opacity: .8; }
 .login-copy::after { content: ''; position: absolute; width: 310px; height: 310px; border-radius: 50%; background: #009af4; left: -180px; bottom: -175px; }
 .eyebrow, .overline { display: inline-block; color: var(--blue); font-size: var(--fs-xs); letter-spacing: .14em; font-weight: 800; margin-bottom: 12px; }
 .login-copy .eyebrow { color: #65c7ff; }
-.login-copy h1 { font-size: clamp(42px, 4.1vw, 63px); line-height: 1.06; letter-spacing: -.05em; margin: 5px 0 26px; }
-.login-copy > p { max-width: 510px; color: #c6c8d3; font-size: var(--fs-xl); line-height: 1.65; }
-.login-art { position: absolute; inset: auto 25px 30px 35px; height: 280px; }
-.art-card { position: absolute; width: 150px; height: 112px; border: 1px solid rgba(255,255,255,.28); background: rgba(255,255,255,.12); backdrop-filter: blur(20px); border-radius: 22px; padding: 22px; z-index: 2; transform: rotate(-7deg); box-shadow: 0 20px 45px rgba(0,0,0,.22); }
-.art-card span { display: block; font-weight: 800; font-size: var(--fs-5xl); }
-.art-card small { color: #d7d7df; }
-.art-card--one { left: 17%; top: 80px; }
-.art-card--two { right: 14%; top: 18px; transform: rotate(8deg); }
-.art-orbit { position: absolute; width: 260px; height: 180px; border: 1px solid rgba(255,255,255,.22); border-radius: 50%; left: 30%; top: 42px; transform: rotate(-14deg); }
+.login-copy h1 { font-size: clamp(36px, 3.5vw, 54px); line-height: 1.08; letter-spacing: -.04em; margin: 5px 0 22px; }
+.login-copy > p { max-width: 520px; color: #c6c8d3; font-size: var(--fs-lg); line-height: 1.6; }
+.login-art { position: absolute; inset: auto 25px 30px 35px; height: 210px; }
+.art-card { position: absolute; width: 172px; min-height: 112px; border: 1px solid rgba(255,255,255,.28); background: rgba(255,255,255,.12); backdrop-filter: blur(20px); border-radius: 22px; padding: 22px; z-index: 2; transform: rotate(-7deg); box-shadow: 0 20px 45px rgba(0,0,0,.22); }
+.art-card span { display: block; font-weight: 800; font-size: var(--fs-4xl); line-height: 1.1; margin-bottom: 5px; }
+.art-card small { display: block; color: #d7d7df; font-size: var(--fs-2xs); line-height: 1.4; }
+.art-card--one { left: 4%; top: 62px; }
+.art-card--two { right: 4%; top: 0; transform: rotate(8deg); }
+.art-orbit { position: absolute; width: 240px; height: 160px; border: 1px solid rgba(255,255,255,.22); border-radius: 50%; left: 28%; top: 30px; transform: rotate(-14deg); }
 .art-orbit i { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: var(--green); }
 .art-orbit i:nth-child(1) { top: 1px; left: 80px; }.art-orbit i:nth-child(2) { right: 5px; top: 90px; background: var(--red); }.art-orbit i:nth-child(3) { bottom: 8px; left: 55px; background: var(--blue); }
 .login-actions { padding: 70px 64px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }

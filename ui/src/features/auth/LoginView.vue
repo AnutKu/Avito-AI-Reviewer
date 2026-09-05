@@ -15,11 +15,11 @@ const roles = [
     <section class="login-card">
       <div class="login-copy">
         <span class="eyebrow">AI REVIEWER</span>
-        <h1>Единый кабинет<br />проверки работ</h1>
-        <p>Распределение, предварительное AI-ревью и обратная связь — в одном понятном процессе.</p>
+        <h1>Весь цикл заданий&nbsp;—<br />в одном окне</h1>
+        <p>AI создаёт и тестирует задания, распределяет и проверяет работы, готовит обратную связь. Выявляет признаки AI-генерации, помогает проверить понимание студента и показывает, что улучшить в курсе.</p>
         <div class="login-art">
-          <div class="art-card art-card--one"><span>24</span><small>работы</small></div>
-          <div class="art-card art-card--two"><span>84%</span><small>согласие</small></div>
+          <div class="art-card art-card--one"><span>24</span><small>работы в очереди</small></div>
+          <div class="art-card art-card--two"><span>84%</span><small>AI-рекомендаций принято без правок</small></div>
           <div class="art-orbit"><i /><i /><i /></div>
         </div>
       </div>
