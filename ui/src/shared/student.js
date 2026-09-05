@@ -7,6 +7,15 @@
  */
 export const STAGES = ['not_submitted', 'in_review', 'completed']
 
+// Пример ссылки в поле сдачи — тот же репозиторий, на котором построен пример
+// задания в редакторе методиста (см. EXAMPLE в shared/taskbank.js): курсовые
+// работы по компьютерным сетям НГУ.
+//
+// Именно плейсхолдер, а не значение по умолчанию: раньше в поле стояла готовая
+// ссылка, и отправить чужой репозиторий можно было одним кликом, не заметив, —
+// а повторная сдача по заданию не предусмотрена.
+export const EXAMPLE_SOURCE_URL = 'https://github.com/feff2/computer_networks'
+
 export function assignmentStage(item) {
   if (!item || !item.submission) return 'not_submitted'
   return item.submission.status === 'completed' ? 'completed' : 'in_review'

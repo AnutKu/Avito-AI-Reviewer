@@ -8,7 +8,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { api, formatDate } from '../../shared/api'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import {
-  AI_BLOCKS, PERSONA_TYPE, RUN_STATE, SEVERITY, SOLUTIONS_NOTE, criteriaTotal,
+  AI_BLOCKS, EXAMPLE, PERSONA_TYPE, RUN_STATE, SEVERITY, SOLUTIONS_NOTE, criteriaTotal,
   decidedRecommendations, fieldTitle, filterAssignments, isDirty, kindLabel, kindWhy,
   cleanCriterion, defaultPassScore, describePenalty, filledCriteria, mergeCriterion,
   openRecommendations, penaltyForm, penaltyPayload, personaAbout, personaFace,
@@ -619,7 +619,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
         <article v-if="!draft.id" class="card tb-idea">
           <div class="card-title"><div><h2>Собрать черновик из идеи</h2><p>AI предложит структуру: условие, критерии, эталон. Заполнятся только пустые блоки.</p></div><button class="secondary" @click="ideaOpen = !ideaOpen">{{ ideaOpen ? 'Свернуть' : '✦ Открыть' }}</button></div>
           <template v-if="ideaOpen">
-            <label>Идея задания<textarea v-model="idea.idea" rows="3" placeholder="Например: студент в роли аналитика разбирает падение ROMI…" /></label>
+            <label>Идея задания<textarea v-model="idea.idea" rows="3" :placeholder="EXAMPLE.idea" /></label>
             <div class="af-row">
               <label>Направление<input v-model="idea.track" /></label>
               <label>Формат<select v-model="idea.task_format"><option value="auto">авто</option><option value="case_study">бизнес-кейс</option><option value="metrics_design">подбор метрик</option><option value="coding">задача с кодом</option><option value="open">свободный</option></select></label>
@@ -634,11 +634,11 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
         <article class="card">
           <h2 class="tb-block-title">Основная информация</h2>
           <div class="af-row">
-            <label>Название<input v-model="draft.title" /></label>
+            <label>Название<input v-model="draft.title" :placeholder="EXAMPLE.title" /></label>
             <label>Курс<select v-model="draft.course_id"><option v-for="c in courses" :key="c.id" :value="c.id">{{ c.title }}</option></select></label>
           </div>
           <div class="af-row">
-            <label>Тема<input v-model="draft.authoring.topic" /></label>
+            <label>Тема<input v-model="draft.authoring.topic" :placeholder="EXAMPLE.topic" /></label>
             <label>Уровень<select v-model="draft.authoring.difficulty"><option value="">—</option><option value="basic">базовый</option><option value="medium">средний</option><option value="advanced">продвинутый</option></select></label>
             <label>Время, мин<input v-model="draft.authoring.estimated_minutes" type="number" min="0" /></label>
             <label>Трудоёмкость<input v-model.number="draft.effort_weight" type="number" min="0.5" step="0.5" /></label>
@@ -647,7 +647,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             <label>Дедлайн<input v-model="draft.deadline_at" type="datetime-local" /></label>
             <label>Канал сдачи<select v-model="draft.submission_channel"><option value="github">GitHub</option><option value="stepik">Stepik</option><option value="gdocs">Google Docs</option></select></label>
           </div>
-          <label>Образовательная цель — чему научится студент (по строке)<textarea v-model="draft.authoring.learning_objectives" rows="3" /></label>
+          <label>Образовательная цель — чему научится студент (по строке)<textarea v-model="draft.authoring.learning_objectives" rows="3" :placeholder="EXAMPLE.objectives" /></label>
 
           <div class="tb-penalty">
             <span class="tb-crit-label">Штраф за просрочку</span>
@@ -673,7 +673,9 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
             </span>
           </div>
           <MarkdownText v-if="shownAs.has(block.field)" class="tb-preview-block" :text="blockValue(block.field)" />
-          <textarea v-else class="tb-area" :value="blockValue(block.field)" rows="5" @input="setBlock(block.field, $event.target.value)" />
+          <!-- Ключи примера совпадают с block.field — подсказка в каждом блоке
+               своя и продолжает соседнюю, а не повторяет её другими словами. -->
+          <textarea v-else class="tb-area" :value="blockValue(block.field)" rows="5" :placeholder="EXAMPLE[block.field]" @input="setBlock(block.field, $event.target.value)" />
         </article>
 
         <article class="card">
@@ -693,15 +695,15 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
               </button>
             </header>
             <label class="tb-crit-field">Подсказка студенту — одна фраза, без раскрытия ожиданий
-              <textarea v-model="c.student_hint" rows="2" />
+              <textarea v-model="c.student_hint" rows="2" :placeholder="EXAMPLE.criterion_hint" />
             </label>
             <label class="tb-crit-field">Что проверяет ревьюер — скрыто от студента
-              <textarea v-model="c.description" rows="3" />
+              <textarea v-model="c.description" rows="3" :placeholder="EXAMPLE.criterion_description" />
             </label>
 
             <div class="tb-crit-hidden">
               <label class="tb-crit-field">Признаки сильного ответа — по одному в строке
-                <textarea :value="c.expected_signals.join('\n')" rows="4" placeholder="приведён расчёт с формулой&#10;выбор обоснован сравнением с альтернативой"
+                <textarea :value="c.expected_signals.join('\n')" rows="4" :placeholder="EXAMPLE.signals"
                           @input="c.expected_signals = $event.target.value.split('\n')" />
                 <small v-if="!c.expected_signals.some(Boolean)" class="tb-crit-empty">не заданы — ревьюер не поймёт, что считать сильным ответом</small>
               </label>
@@ -710,8 +712,8 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
                 <span class="tb-crit-label">Уровни и пороги — от «не выполнено» до максимума</span>
                 <div v-for="(lv, li) in c.levels" :key="li" class="tb-level">
                   <input v-model.number="lv.points" type="number" min="0" step="0.5" :max="c.max_score" title="баллы" />
-                  <input v-model="lv.label" placeholder="метка" title="метка уровня" />
-                  <input v-model="lv.descriptor" placeholder="что видно в работе" title="наблюдаемый признак" />
+                  <input v-model="lv.label" :placeholder="EXAMPLE.level_label" title="метка уровня" />
+                  <input v-model="lv.descriptor" :placeholder="EXAMPLE.level_descriptor" title="наблюдаемый признак" />
                   <button class="text-button danger" title="убрать уровень" @click="c.levels.splice(li, 1)">×</button>
                 </div>
                 <p v-if="!c.levels.length" class="tb-crit-empty">не заданы — балл будет ставиться на глаз</p>
@@ -734,8 +736,8 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 
         <article class="card">
           <h2 class="tb-block-title">Эталон и ориентиры</h2>
-          <label>Эталонное решение — скрыто от студента<textarea v-model="draft.authoring.reference_solution" rows="10" /></label>
-          <label>Заметки для ревьюеров — спорные места, на что смотреть, как калибровать<textarea v-model="draft.authoring.reviewer_notes" rows="8" /></label>
+          <label>Эталонное решение — скрыто от студента<textarea v-model="draft.authoring.reference_solution" rows="10" :placeholder="EXAMPLE.reference_solution" /></label>
+          <label>Заметки для ревьюеров — спорные места, на что смотреть, как калибровать<textarea v-model="draft.authoring.reviewer_notes" rows="8" :placeholder="EXAMPLE.reviewer_notes" /></label>
         </article>
       </div>
 

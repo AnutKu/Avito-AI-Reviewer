@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, formatDate } from '../../shared/api'
 import { HUMAN_TICK, useLiveRefresh } from '../../shared/live'
-import { nearestDeadline, orderAssignments } from '../../shared/student'
+import { EXAMPLE_SOURCE_URL, nearestDeadline, orderAssignments } from '../../shared/student'
 import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
 
@@ -26,7 +26,10 @@ const deadline = computed(() => nearestDeadline(assignments.value, now.value))
 const detail = ref(null)
 const result = ref(null)
 const blitz = ref([])
-const sourceUrl = ref('https://github.com/student/mlflow-homework')
+// Пустое поле с подсказкой, а не готовая ссылка. Раньше здесь стояло значение,
+// и отправить чужой репозиторий можно было одним кликом, ничего не заметив, —
+// а повторная сдача по заданию не предусмотрена.
+const sourceUrl = ref('')
 const answers = ref({})
 
 const ROOT = 'student-assignments'
@@ -103,6 +106,10 @@ let submitTimer = null
 async function submit() {
   if (submitState.value !== 'idle') return
   error.value = ''
+  // Поле теперь пустое по умолчанию, и пустая отправка стала возможной. Сервер
+  // ответил бы на неё разбором схемы HttpUrl — про «ввод не является ссылкой»,
+  // а не про то, что ссылку забыли вставить.
+  if (!sourceUrl.value.trim()) { error.value = 'Вставьте ссылку на репозиторий с решением'; return }
   submitState.value = 'sending'
   try {
     await api(`/student/assignments/${detail.value.id}/submissions`, { method: 'POST', body: JSON.stringify({ source_url: sourceUrl.value }) })
@@ -253,7 +260,7 @@ onUnmounted(() => {
         <!-- Работа сдаётся один раз. По «назад» сюда можно вернуться уже после
              отправки — тогда вместо формы показываем, что с работой сейчас. -->
         <aside v-if="detail.submission" class="card submit-card"><span class="card-icon blue">✓</span><h2>Работа отправлена</h2><p>Отправлена {{ formatDate(detail.submission.submitted_at, true) }}. Повторная сдача по заданию не предусмотрена.</p><StatusBadge :status="detail.submission.status" :labels="studentLabels" /><small>Результат появится в списке заданий, когда ревьюер опубликует его</small></aside>
-        <aside v-else class="card submit-card"><span class="card-icon blue">↗</span><h2>Сдать работу</h2><p>Укажите ссылку на публичный GitHub-репозиторий. После отправки мы сохраним снапшот.</p><label>Ссылка на репозиторий<input v-model="sourceUrl" placeholder="https://github.com/..." /></label><button class="primary full submit-button" :class="`is-${submitState}`" :disabled="submitState !== 'idle'" @click="submit"><span class="submit-face">Отправить на проверку</span><span class="submit-face" aria-hidden="true"><i class="submit-spinner" />Отправляем…</span><span class="submit-face" aria-hidden="true"><i class="submit-check">✓</i>Отправлено</span></button><small>После отправки ссылка будет зафиксирована</small></aside>
+        <aside v-else class="card submit-card"><span class="card-icon blue">↗</span><h2>Сдать работу</h2><p>Укажите ссылку на публичный GitHub-репозиторий. После отправки мы сохраним снапшот.</p><label>Ссылка на репозиторий<input v-model="sourceUrl" :placeholder="EXAMPLE_SOURCE_URL" /></label><button class="primary full submit-button" :class="`is-${submitState}`" :disabled="submitState !== 'idle'" @click="submit"><span class="submit-face">Отправить на проверку</span><span class="submit-face" aria-hidden="true"><i class="submit-spinner" />Отправляем…</span><span class="submit-face" aria-hidden="true"><i class="submit-check">✓</i>Отправлено</span></button><small>После отправки ссылка будет зафиксирована</small></aside>
       </div>
     </template>
 
