@@ -477,6 +477,9 @@ def _fake_criterion(system: str, user: str):
     from app.schemas import Criterion
 
     title = _line_after(user, "Критерий:") or "Критерий"
+    if title.startswith("(не задан"):
+        # Название придумывает агент — в оффлайне берём предсказуемое, но осмысленное.
+        title = "Обоснование решения"
     try:
         top = float(_line_after(user, "Максимум баллов:") or 5)
     except ValueError:

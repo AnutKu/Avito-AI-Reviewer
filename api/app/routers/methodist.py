@@ -32,7 +32,8 @@ from ..serializers import (
     submission_data,
 )
 from ..services import task_ai
-from ..services.analytics import course_report, performance_report
+from ..services.analytics import agreement_by_assignment, course_report, performance_report
+from ..services.course_debt import debt_report
 from ..services.assignment import (
     assign_submission,
     auto_assign_enabled,
@@ -174,13 +175,18 @@ class AiRunPayload(BaseModel):
 
 
 class CriterionAssistPayload(BaseModel):
-    """Достроить критерий до применимого. Ответ — предложение, не запись."""
+    """Достроить критерий до применимого. Ответ — предложение, не запись.
 
-    title: str = Field(min_length=1)
+    Пустое название допустимо: тогда агент сам предлагает, что стоит оценивать
+    в этом задании, глядя на уже заведённые критерии.
+    """
+
+    title: str = ""
     max_score: float = Field(gt=0, le=100)
     student_hint: str = ""
     description: str = ""
     context: dict = Field(default_factory=dict)
+    existing: list[str] = Field(default_factory=list)
 
 
 class RecommendationDecision(BaseModel):
@@ -496,7 +502,10 @@ def courses(user: User = Depends(methodist_guard), db: Session = Depends(get_db)
 @router.get("/assignments")
 def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get_db)) -> list[dict]:
     del user
-    rows = db.scalars(select(Assignment).order_by(Assignment.created_at.desc()))
+    rows = list(db.scalars(select(Assignment).order_by(Assignment.created_at.desc())))
+    # Одним запросом на весь банк, а не по запросу на строку: заданий немного,
+    # но N+1 в списке — это то, что потом никто не находит.
+    agreement = agreement_by_assignment(db, rows)
     result = []
     for row in rows:
         rubric = db.get(RubricVersion, row.current_rubric_version_id)
@@ -518,6 +527,9 @@ def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get
             select(AiRun).where(AiRun.assignment_id == row.id).order_by(AiRun.created_at.desc())
         ).first()
         data["last_run"] = ai_run_data(last_run) if last_run else None
+        # Насколько ревьюеры соглашаются с AI по этому заданию. Низкая доля —
+        # это не про плохой AI, а про критерии, по которым не сходятся двое.
+        data["agreement"] = agreement.get(row.id) or {"decided": 0, "accepted": 0, "rate": None}
         result.append(data)
     return result
 
@@ -874,13 +886,17 @@ def analytics(
     user: User = Depends(methodist_guard),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Объединённый экран «Дашборд курса»: обзор потока + качество проверки.
+    """Аналитика курса: обзор потока, качество проверки и образовательный долг.
 
     Всё считается по живым записям. Блок `quality` приезжает только когда
-    включён фиче-флаг аналитики — вкладка исчезает, экран остаётся целым."""
+    включён фиче-флаг аналитики, `debt` — свой флаг: разбор долга опирается на
+    накопленную статистику, и на пустом курсе его лучше не показывать вовсе."""
 
     del user
-    return course_report(db, course_id, with_quality=settings.feature_analytics)
+    report = course_report(db, course_id, with_quality=settings.feature_analytics)
+    if settings.feature_course_debt:
+        report["debt"] = debt_report(db, course_id)
+    return report
 
 
 @router.get("/performance")
@@ -1027,6 +1043,7 @@ def ai_criterion(payload: CriterionAssistPayload, user: User = Depends(methodist
         student_hint=payload.student_hint,
         description=payload.description,
         task_context={k: v for k, v in payload.context.items() if isinstance(v, str) and v},
+        existing=[name for name in payload.existing if name],
     )
     return task_ai.from_engine_criterion(out)
 

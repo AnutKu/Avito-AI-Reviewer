@@ -13,7 +13,13 @@ import { describe, it } from 'node:test'
 
 import {
   cleanCriterion,
+  debtEmptyState,
+  debtFace,
+  debtLink,
   criteriaTotal,
+  defaultPassScore,
+  filledCriteria,
+  mergeCriterion,
   filterAssignments,
   isDirty,
   kindLabel,
@@ -27,7 +33,6 @@ import {
   runTypeFrom,
   samplingNote,
   scoreWarning,
-  sortAssignments,
   splitByPublication,
 } from '../src/shared/taskbank.js'
 import { parseHash } from '../src/shared/route.js'
@@ -58,10 +63,6 @@ describe('список', () => {
     assert.equal(filterAssignments(ROWS, '   ').length, 3)
   })
 
-  it('сортировка «давно не проверяли» поднимает непроверенное наверх', () => {
-    assert.deepEqual(sortAssignments(ROWS, 'checked').map(r => r.id), ['2', '3', '1'])
-  })
-
   it('состояние прогона не подменяет статус публикации', () => {
     // Черновик может быть проверен, опубликованное — ни разу не проверено.
     // Поэтому это два разных поля и два разных индикатора.
@@ -73,20 +74,39 @@ describe('список', () => {
 })
 
 describe('баллы', () => {
-  it('максимум — сумма критериев', () => {
-    assert.equal(criteriaTotal([{ max_score: 4 }, { max_score: 6 }]), 10)
+  it('максимум — сумма заполненных критериев', () => {
+    assert.equal(criteriaTotal([{ title: 'A', max_score: 4 }, { title: 'B', max_score: 6 }]), 10)
+  })
+
+  it('пустая заготовка в сумму не идёт', () => {
+    // Иначе добавленный, но ещё не заполненный критерий ломает арифметику
+    // раньше, чем в него что-то написали.
+    assert.equal(criteriaTotal([{ title: 'A', max_score: 4 }, { title: '', max_score: 5 }]), 4)
+    assert.equal(filledCriteria([{ title: 'A' }, { title: '  ' }]).length, 1)
+  })
+
+  it('проходной балл по умолчанию — 60% суммы, целым числом', () => {
+    assert.equal(defaultPassScore([{ title: 'A', max_score: 4 }, { title: 'B', max_score: 6 }]), 6)
+    assert.equal(defaultPassScore([{ title: 'A', max_score: 7 }]), 4, 'дробный порог округляется')
+    assert.equal(defaultPassScore([]), 0)
   })
 
   it('проходной балл выше максимума — предупреждение', () => {
-    assert.match(scoreWarning([{ max_score: 4 }], 6), /больше максимума/)
+    assert.match(scoreWarning([{ title: 'A', max_score: 4 }], 6), /больше максимума/)
   })
 
   it('нулевой балл критерия ловится отдельно', () => {
-    assert.match(scoreWarning([{ max_score: 0 }], 0), /больше нуля/)
+    assert.match(scoreWarning([{ title: 'A', max_score: 0 }], 0), /больше нуля/)
   })
 
   it('корректная рубрика молчит', () => {
-    assert.equal(scoreWarning([{ max_score: 4 }, { max_score: 6 }], 6), '')
+    assert.equal(scoreWarning([{ title: 'A', max_score: 4 }, { title: 'B', max_score: 6 }], 6), '')
+  })
+
+  it('пустая заготовка не мешает публикации', () => {
+    const draft = { title: 'Кейс', statement: 'Условие', pass_score: 3,
+      criteria: [{ title: 'A', max_score: 5 }, { title: '', max_score: 5 }] }
+    assert.deepEqual(publishBlockers(draft), [])
   })
 })
 
@@ -103,8 +123,13 @@ describe('редактор', () => {
   })
 
   it('заполненный черновик публикуется без замечаний', () => {
-    const ok = { title: 'Кейс', statement: 'Условие', criteria: [{ max_score: 5 }], pass_score: 3 }
+    const ok = { title: 'Кейс', statement: 'Условие', criteria: [{ title: 'A', max_score: 5 }], pass_score: 3 }
     assert.deepEqual(publishBlockers(ok), [])
+  })
+
+  it('черновик из одних пустых заготовок публиковать нечего', () => {
+    const blank = { title: 'Кейс', statement: 'Условие', criteria: [{ title: '', max_score: 5 }] }
+    assert.ok(publishBlockers(blank).includes('хотя бы один критерий'))
   })
 })
 
@@ -233,5 +258,104 @@ describe('критерий перед отправкой', () => {
     const clean = cleanCriterion({ title: 'Метрики', max_score: 4 })
     assert.deepEqual(clean.expected_signals, [])
     assert.deepEqual(clean.levels, [])
+  })
+})
+
+describe('образовательный долг', () => {
+  it('пустой экран и нехватка данных — разные сообщения', () => {
+    // «Долга нет» и «мы не смогли посчитать» выглядят одинаково пусто, но
+    // означают противоположное. Путать их — значит успокаивать без оснований.
+    const thin = debtEmptyState({ coverage: { enough: false, graded: 2 }, items: [] })
+    assert.match(thin.title, /Данных пока мало/)
+    assert.match(thin.text, /2/)
+
+    const clean = debtEmptyState({ coverage: { enough: true, graded: 40 }, items: [] })
+    assert.match(clean.title, /Долга не видно/)
+    assert.match(clean.text, /не гарантия/)
+  })
+
+  it('когда долг есть, заглушки нет', () => {
+    assert.equal(debtEmptyState({ coverage: { enough: true, graded: 40 }, items: [{}] }), null)
+  })
+
+  it('без данных о долге блок вообще не рисуется', () => {
+    assert.equal(debtEmptyState(null), null)
+    assert.equal(debtEmptyState(undefined), null)
+  })
+
+  it('у каждого вида долга своё лицо', () => {
+    const kinds = ['topic', 'repeated_error', 'criterion_corrections', 'questions', 'stale_task']
+    assert.equal(new Set(kinds.map(debtFace)).size, 5)
+    assert.equal(debtFace('что-то новое'), '•')
+  })
+})
+
+describe('переход из долга в правку', () => {
+  it('критерий ведёт прямо к критерию, а не просто к заданию', () => {
+    const link = debtLink({ assignment_id: 'a1', criterion_key: 'metrics' })
+    assert.equal(link.path, 'methodist-rubrics/a1/criterion/metrics')
+    assert.match(link.label, /критерий/i)
+  })
+
+  it('задание ведёт в редактор задания', () => {
+    assert.equal(debtLink({ assignment_id: 'a1' }).path, 'methodist-rubrics/a1')
+  })
+
+  it('тема ведёт в банк, отфильтрованный по теме', () => {
+    const link = debtLink({ topic: 'Работа с данными' })
+    assert.match(link.path, /^methodist-rubrics\/topic\//)
+    assert.equal(decodeURIComponent(link.path.split('/topic/')[1]), 'Работа с данными')
+  })
+
+  it('ключ критерия со слэшем не ломает адрес', () => {
+    const link = debtLink({ assignment_id: 'a1', criterion_key: 'a/b' })
+    assert.equal(link.path.split('/').length, 4, 'слэш внутри ключа должен быть закодирован')
+  })
+
+  it('без цели кнопки нет', () => {
+    assert.equal(debtLink({}), null)
+    assert.equal(debtLink(null), null)
+  })
+
+  it('поиск в банке находит задания темы — иначе переход ведёт в пустоту', () => {
+    const rows = [{ title: 'Кейс', course: 'ML', authoring: { topic: 'Работа с данными' } }]
+    assert.equal(filterAssignments(rows, 'Работа с данными').length, 1)
+  })
+})
+
+describe('вставка предложения в критерий', () => {
+  const proposed = {
+    title: 'Причины оттока', student_hint: 'что оценивается',
+    description: 'Названы причины с опорой на данные',
+    expected_signals: ['есть расчёт'], levels: [{ points: 0, label: 'Нет', descriptor: 'нет' }],
+  }
+
+  it('вес и ключ остаются за автором', () => {
+    const current = { key: 'churn', max_score: 7, title: 'Мой критерий' }
+    const merged = mergeCriterion(current, proposed)
+    assert.equal(merged.max_score, undefined, 'вес не входит в правку — его не трогают')
+    assert.equal(merged.key, undefined)
+    assert.equal(merged.title, 'Мой критерий', 'своё название не перебивается')
+  })
+
+  it('пустому критерию название даёт агент', () => {
+    assert.equal(mergeCriterion({ title: '' }, proposed).title, 'Причины оттока')
+  })
+
+  it('скрытая часть приезжает целиком', () => {
+    const merged = mergeCriterion({}, proposed)
+    assert.deepEqual(merged.expected_signals, ['есть расчёт'])
+    assert.equal(merged.levels.length, 1)
+  })
+
+  it('ответ без признаков и уровней не оставляет undefined', () => {
+    // Иначе шаблон падает на c.levels.length, и экран замирает до перезагрузки.
+    const merged = mergeCriterion({}, { title: 'X', description: 'Y' })
+    assert.deepEqual(merged.expected_signals, [])
+    assert.deepEqual(merged.levels, [])
+  })
+
+  it('служебный ключ списка не уезжает в рубрику', () => {
+    assert.equal(cleanCriterion({ _uid: 7, title: 'A', max_score: 3 })._uid, undefined)
   })
 })

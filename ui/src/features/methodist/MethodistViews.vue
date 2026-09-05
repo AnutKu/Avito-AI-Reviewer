@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, formatDate, statusNames } from '../../shared/api'
 import StatusBadge from '../../shared/ui/StatusBadge.vue'
+import { debtEmptyState, debtFace, debtLink } from '../../shared/taskbank'
 import TaskBank from './TaskBank.vue'
 
 const props = defineProps({ active: String, sub: { type: Array, default: () => [] } })
@@ -47,6 +48,12 @@ async function load(active = props.active) {
   } catch (e) { error.value = e.message }
 }
 
+const debtEmpty = computed(() => debtEmptyState(report.value?.debt))
+// Кэша у долга нет: цифры пересчитываются на каждую загрузку экрана. Показываем
+// момент расчёта — иначе непонятно, попала ли в них работа, проверенная минуту назад.
+const formatTime = (value) => (value
+  ? new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+  : '—')
 const isFull = (p) => p.slots_left <= 0
 const initials = (s) => s.split(' ').map(x => x[0]).join('').slice(0, 2)
 const waitingReady = computed(() => distribution.value.filter(x => x.chosen).length)
@@ -268,6 +275,37 @@ onMounted(load)
         </article>
     </div>
 
+    <template v-if="report.debt">
+      <h2 class="dist-subhead">Образовательный долг</h2>
+      <p class="cap-hint">ⓘ Где курс теряет качество — по накопленным работам, ревью и прогонам агентов. Учебных материалов и программы система не видит: она показывает признаки, а решение за вами.</p>
+
+      <div v-if="debtEmpty" class="card debt-empty">
+        <h3>{{ debtEmpty.title }}</h3>
+        <p>{{ debtEmpty.text }}</p>
+      </div>
+
+      <template v-else>
+        <div class="debt-counts">
+          <b>{{ report.debt.items.length }} признак(ов)</b>
+          <span class="debt-coverage">по {{ report.debt.coverage.graded }} проверенным работам · пересчитано {{ formatTime(report.debt.computed_at) }}</span>
+          <button class="text-button" @click="load()">обновить</button>
+        </div>
+
+        <article v-for="(row, i) in report.debt.items" :key="i" class="card debt-row">
+          <span class="debt-face">{{ debtFace(row.kind) }}</span>
+          <div class="debt-body">
+            <b class="debt-title">{{ row.title }}</b>
+            <p class="debt-detail">{{ row.detail }}</p>
+            <p class="debt-evidence">На чём основано: {{ row.evidence }}</p>
+            <div class="debt-foot">
+              <p class="debt-action">→ {{ row.action }}</p>
+              <button v-if="debtLink(row.target)" class="secondary" @click="$emit('navigate', debtLink(row.target).path)">{{ debtLink(row.target).label }}</button>
+            </div>
+          </div>
+        </article>
+      </template>
+    </template>
+
     <template v-if="report.quality">
       <h2 class="dist-subhead">Качество проверки</h2>
       <div class="analytics-grid">
@@ -292,12 +330,15 @@ onMounted(load)
       </div>
 
       <article class="card corrections">
-        <div class="card-title"><div><h2>Критерии с частыми правками</h2><p>Ревьюер меняет или отклоняет оценку AI — кандидаты на уточнение формулировки</p></div><span v-if="criteriaRows.length" class="warning-chip">! максимум {{ pct(criteriaRows[0].correction_rate) }}</span></div>
-        <div v-for="row in criteriaRows" :key="row.key" class="correction-row">
-          <b>{{ row.title }}</b>
+        <div class="card-title"><div><h2>Критерии с частыми правками</h2><p>Ревьюер меняет или отклоняет оценку AI — кандидаты на уточнение формулировки</p></div></div>
+        <div class="correction-row correction-head"><span>Критерий</span><span /><span>Правок</span><span>Основание</span><span /></div>
+        <div v-for="row in criteriaRows" :key="`${row.assignment_id}:${row.key}`" class="correction-row">
+          <b>{{ row.title }}<small>{{ row.assignment || 'задание не найдено' }}</small></b>
           <div><i :style="`width:${Math.max(2, row.correction_rate)}%`" /></div>
           <strong>{{ pct(row.correction_rate) }}</strong>
           <small>{{ row.reviews }} ревью · AI {{ score(row.avg_ai) }} → {{ score(row.avg_final) }}</small>
+          <button v-if="row.assignment_id" class="text-button" @click="$emit('navigate', `methodist-rubrics/${row.assignment_id}/criterion/${encodeURIComponent(row.key)}`)">посмотреть</button>
+          <span v-else />
         </div>
         <div v-if="!criteriaRows.length" class="empty-mini">Ревьюеры ещё не приняли ни одного решения по критериям.</div>
         <button v-if="report.quality.criteria.length > 8" class="text-button" @click="showAllCriteria = !showAllCriteria">{{ showAllCriteria ? 'свернуть' : `показать все · ${report.quality.criteria.length}` }}</button>

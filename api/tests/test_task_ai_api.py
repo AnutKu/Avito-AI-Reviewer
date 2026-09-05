@@ -83,11 +83,16 @@ class FakeEngine:
         FakeEngine.last_samples = samples
         return {"id": "engine-run-1", "status": "running", "progress": "решатели работают"}
 
-    def assist_criterion(self, *, title, max_points, student_hint="", description="", task_context=None):
+    last_existing: list = []
+
+    def assist_criterion(
+        self, *, title="", max_points, student_hint="", description="", task_context=None, existing=None
+    ):
         del student_hint, description, task_context
         FakeEngine.calls.append("assist:criterion")
+        FakeEngine.last_existing = list(existing or [])
         return {
-            "key": "c1", "title": title, "max_points": max_points,
+            "key": "c1", "title": title or "Придуманный критерий", "max_points": max_points,
             "student_hint": "что оценивается", "description": "проверяемый признак",
             "check_kind": "subjective", "evidence_hint": "куда смотреть",
             "expected_signals": ["есть формула", "есть вывод"],
@@ -536,3 +541,50 @@ def test_reviewer_sees_levels_without_the_reference_solution(methodist, client):
     assert for_reviewer["rubric"][0]["levels"], "градация ревьюеру нужна"
     assert "authoring" not in for_reviewer
     assert "СЕКРЕТНЫЙ ЭТАЛОН" not in str(for_reviewer)
+
+
+def test_a_criterion_can_be_asked_for_without_a_title(methodist, engine):
+    """Методист добавил критерий и не знает, что писать, — это законный вход."""
+
+    response = methodist.post(
+        "/api/methodist/ai-criterion",
+        json={"max_score": 4, "context": {"title": "Кейс"}, "existing": ["Метрики"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["title"], "название приходит от агента"
+
+
+def test_existing_criteria_are_passed_so_the_agent_does_not_repeat_them(methodist, engine):
+    methodist.post(
+        "/api/methodist/ai-criterion",
+        json={"max_score": 4, "existing": ["Метрики", "Выводы"]},
+    )
+    assert engine.last_existing == ["Метрики", "Выводы"]
+
+
+# --- согласие ревьюеров с AI, по каждому заданию ---------------------------
+
+
+def test_the_bank_shows_how_often_reviewers_agree_with_the_ai(methodist):
+    """Низкая доля — это не про плохой AI, а про критерии, по которым не сходятся."""
+
+    rows = methodist.get("/api/methodist/assignments").json()
+    scored = [r for r in rows if r["agreement"]["decided"]]
+    assert scored, "в демо-курсе есть проверенные работы — статистика должна быть"
+    for row in scored:
+        stat = row["agreement"]
+        assert 0 <= stat["accepted"] <= stat["decided"]
+        if stat["rate"] is not None:
+            assert 0 <= stat["rate"] <= 100
+
+
+def test_a_fresh_task_reports_no_agreement_instead_of_a_hundred_percent(methodist):
+    """Одно принятое решение — это «100%». Показать его рядом с сотней настоящих
+    значит соврать, поэтому до порога доля не считается вовсе."""
+
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={"title": "Свежее", "criteria": [{"title": "Метрики", "max_score": 4}]},
+    ).json()["id"]
+    row = next(r for r in methodist.get("/api/methodist/assignments").json() if r["id"] == created)
+    assert row["agreement"] == {"decided": 0, "accepted": 0, "rate": None}

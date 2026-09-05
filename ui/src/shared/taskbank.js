@@ -84,27 +84,28 @@ export function filterAssignments(rows, query) {
   const q = (query || '').trim().toLowerCase()
   if (!q) return rows || []
   return (rows || []).filter(r =>
-    (r.title || '').toLowerCase().includes(q) || (r.course || '').toLowerCase().includes(q))
-}
-
-export function sortAssignments(rows, mode) {
-  const list = [...(rows || [])]
-  if (mode === 'title') return list.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'ru'))
-  if (mode === 'checked') {
-    // Сначала то, что давно не проверяли: непроверенное — самое срочное.
-    const stamp = (r) => (r.last_run?.completed_at ? Date.parse(r.last_run.completed_at) : 0)
-    return list.sort((a, b) => stamp(a) - stamp(b))
-  }
-  return list
+    (r.title || '').toLowerCase().includes(q)
+    || (r.course || '').toLowerCase().includes(q)
+    || (r.authoring?.topic || '').toLowerCase().includes(q))
 }
 
 // --- арифметика баллов -----------------------------------------------------
 
+// Критерий без названия ещё не заведён: он пустая карточка, которую методист
+// только что добавил. В сумму баллов, в предупреждения и в рубрику он не идёт —
+// иначе пустая заготовка ломает арифметику до того, как её начали заполнять.
+export const filledCriteria = (criteria) =>
+  (criteria || []).filter(c => (c.title || '').trim())
+
 export const criteriaTotal = (criteria) =>
-  (criteria || []).reduce((sum, c) => sum + (Number(c.max_score) || 0), 0)
+  filledCriteria(criteria).reduce((sum, c) => sum + (Number(c.max_score) || 0), 0)
+
+// Проходной балл по умолчанию — 60% от суммы, целым числом. Дробный порог на
+// экране студента выглядит как ошибка, а спорить о десятых долях балла незачем.
+export const defaultPassScore = (criteria) => Math.round(criteriaTotal(criteria) * 0.6)
 
 export function scoreWarning(criteria, passScore) {
-  const rows = criteria || []
+  const rows = filledCriteria(criteria)
   if (!rows.length) return 'Добавьте хотя бы один критерий.'
   if (rows.some(c => !(Number(c.max_score) > 0))) return 'У каждого критерия должен быть балл больше нуля.'
   const total = criteriaTotal(rows)
@@ -140,10 +141,27 @@ export function runTypeFrom(students, reviewers) {
   return null
 }
 
+// Что именно предложение агента меняет в критерии.
+//
+// Вес и ключ не трогаются никогда — они принадлежат автору. Название тоже:
+// оно опознаёт критерий, и «улучшить» не должно его переименовывать; агент
+// даёт название, только если своего ещё нет. Остальное — содержание, ради
+// правки которого помощника и звали.
+export function mergeCriterion(current, proposed) {
+  return {
+    title: (current.title || '').trim() || proposed.title || '',
+    student_hint: proposed.student_hint || current.student_hint || '',
+    description: proposed.description || '',
+    expected_signals: proposed.expected_signals || [],
+    levels: proposed.levels || [],
+  }
+}
+
 // Критерий перед отправкой. Пустые строки признаков и недописанные уровни
 // отбрасываем здесь, а не в разметке: иначе в рубрику уезжает мусор, по
 // которому AI-ревьюер потом делает замечание.
 export function cleanCriterion(c) {
+  // `_uid` — ключ списка на стороне экрана, в рубрику ему нельзя.
   return {
     key: c.key || '',
     title: c.title,
@@ -165,9 +183,10 @@ export function publishBlockers(draft) {
   const blockers = []
   if (!(draft.title || '').trim()) blockers.push('название')
   if (!(draft.statement || '').trim()) blockers.push('условие')
-  if (!(draft.criteria || []).length) blockers.push('хотя бы один критерий')
+  const filled = filledCriteria(draft.criteria)
+  if (!filled.length) blockers.push('хотя бы один критерий')
   const warning = scoreWarning(draft.criteria, draft.pass_score)
-  if (warning && (draft.criteria || []).length) blockers.push('корректные баллы критериев')
+  if (warning && filled.length) blockers.push('корректные баллы критериев')
   return blockers
 }
 
@@ -202,4 +221,52 @@ export function runIntro(personaType) {
 export function samplingNote(samples) {
   if (!samples || samples < 2) return ''
   return `Каждое решение оценено ${samples} раз(а) по одной и той же рубрике: так видно разброс самой модели — если баллы гуляют, дело не в работе студента, а в формулировке критерия.`
+}
+
+// --- образовательный долг ---------------------------------------------------
+
+export const DEBT_KIND = {
+  topic: ['📚', 'Тема не усваивается'],
+  repeated_error: ['🔁', 'Одна и та же ошибка'],
+  criterion_corrections: ['✍️', 'Критерий переписывают руками'],
+  questions: ['❓', 'Приходится переспрашивать'],
+  stale_task: ['🗓', 'Пора пересмотреть'],
+}
+
+export const debtFace = (kind) => DEBT_KIND[kind]?.[0] || '•'
+export const debtGroup = (kind) => DEBT_KIND[kind]?.[1] || 'Прочее'
+
+// Куда ведёт признак долга. Вывод без пути к правке заставляет искать задание
+// руками — так же, как рекомендация прогона ведёт в редактор, ведёт и это.
+export function debtLink(target) {
+  if (!target) return null
+  if (target.assignment_id && target.criterion_key) {
+    return { path: `methodist-rubrics/${target.assignment_id}/criterion/${encodeURIComponent(target.criterion_key)}`, label: 'Открыть критерий' }
+  }
+  if (target.assignment_id) {
+    return { path: `methodist-rubrics/${target.assignment_id}`, label: 'Открыть задание' }
+  }
+  if (target.topic) {
+    return { path: `methodist-rubrics/topic/${encodeURIComponent(target.topic)}`, label: 'Задания темы' }
+  }
+  return null
+}
+
+// Что показать вместо списка, когда списка нет. Пустой экран читается как «всё
+// хорошо», а это разные вещи: чаще всего данных просто не хватило.
+export function debtEmptyState(debt) {
+  if (!debt) return null
+  if (!debt.coverage?.enough) {
+    return {
+      title: 'Данных пока мало',
+      text: `Проверенных работ: ${debt.coverage?.graded ?? 0}. Долг считается по завершённым проверкам — вернитесь, когда поток наберёт статистику.`,
+    }
+  }
+  if (!debt.items?.length) {
+    return {
+      title: 'Долга не видно',
+      text: 'По накопленным работам ни один из признаков не сработал. Это не гарантия — это значит, что данные пока не спорят с курсом.',
+    }
+  }
+  return null
 }
