@@ -32,7 +32,7 @@ from ..serializers import (
     submission_data,
 )
 from ..services import task_ai
-from ..services.analytics import course_report, performance_report
+from ..services.analytics import agreement_by_assignment, course_report, performance_report
 from ..services.course_debt import debt_report
 from ..services.assignment import (
     assign_submission,
@@ -502,7 +502,10 @@ def courses(user: User = Depends(methodist_guard), db: Session = Depends(get_db)
 @router.get("/assignments")
 def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get_db)) -> list[dict]:
     del user
-    rows = db.scalars(select(Assignment).order_by(Assignment.created_at.desc()))
+    rows = list(db.scalars(select(Assignment).order_by(Assignment.created_at.desc())))
+    # Одним запросом на весь банк, а не по запросу на строку: заданий немного,
+    # но N+1 в списке — это то, что потом никто не находит.
+    agreement = agreement_by_assignment(db, rows)
     result = []
     for row in rows:
         rubric = db.get(RubricVersion, row.current_rubric_version_id)
@@ -524,6 +527,9 @@ def assignments(user: User = Depends(methodist_guard), db: Session = Depends(get
             select(AiRun).where(AiRun.assignment_id == row.id).order_by(AiRun.created_at.desc())
         ).first()
         data["last_run"] = ai_run_data(last_run) if last_run else None
+        # Насколько ревьюеры соглашаются с AI по этому заданию. Низкая доля —
+        # это не про плохой AI, а про критерии, по которым не сходятся двое.
+        data["agreement"] = agreement.get(row.id) or {"decided": 0, "accepted": 0, "rate": None}
         result.append(data)
     return result
 

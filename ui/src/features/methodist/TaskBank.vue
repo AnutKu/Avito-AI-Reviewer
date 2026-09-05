@@ -43,6 +43,15 @@ const search = ref('')
 // Сортировка и фильтр по состоянию прогона убраны: на банке в десяток заданий
 // они добавляли органы управления, а не находимость. Порядок — как отдаёт
 // сервер (новые сверху), поиск — по названию, курсу и теме.
+// Доля без числа решений не взвешивается: 100% по двум критериям и 100% по ста —
+// разные вещи, и подпись обязана их различать.
+function agreeHint(stat) {
+  const decided = stat?.decided || 0
+  if (!decided) return 'работы ещё не проверяли'
+  if (stat.rate === null || stat.rate === undefined) return `решений ${decided} — мало для доли`
+  return `принято ${stat.accepted} из ${decided} решений`
+}
+
 const buckets = computed(() => splitByPublication(rows.value))
 const visible = computed(() =>
   filterAssignments(buckets.value[tab.value === 'published' ? 'published' : 'drafts'], search.value))
@@ -549,11 +558,16 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
     <div v-if="loading && !rows.length" class="skeleton-list"><i /><i /><i /></div>
 
     <div v-else-if="visible.length" class="table-card tb-table">
-      <div class="table-row table-head"><span>Задание</span><span>Критерии</span><span>Статус</span><span>Проверка агентами</span><span /></div>
+      <div class="table-row table-head"><span>Задание</span><span>Критерии</span><span>Статус</span><span>Согласие с AI</span><span>Проверка агентами</span><span /></div>
       <div v-for="item in visible" :key="item.id" class="table-row tb-row">
         <button class="tb-open" @click="go(item.id)"><b>{{ item.title }}</b><small>{{ item.course }}</small></button>
         <span><b>{{ item.rubric.length }}</b><small>максимум {{ item.max_score ?? '—' }} б.</small></span>
         <span><em class="version-pill" :class="item.published ? 'pub' : 'draft'">{{ item.published ? 'Опубликовано' : 'Черновик' }}</em></span>
+        <span class="tb-agree" :title="agreeHint(item.agreement)">
+          <b v-if="item.agreement?.rate !== null && item.agreement?.rate !== undefined" :class="{ bad: item.agreement.rate < 60 }">{{ Math.round(item.agreement.rate) }}%</b>
+          <b v-else class="muted">—</b>
+          <small>{{ agreeHint(item.agreement) }}</small>
+        </span>
         <span class="tb-runcell">
           <template v-if="item.last_run">
             <b :class="RUN_STATE[item.last_run.status]?.[1]">{{ runTitle(item.last_run) }}</b>
@@ -562,8 +576,7 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
           <small v-else>не запускалась</small>
         </span>
         <span class="tb-actions">
-          <button class="text-button" @click="go(item.id)">открыть</button>
-          <button class="text-button" @click="duplicate(item)">копия</button>
+          <button class="text-button" @click="duplicate(item)">сделать копию</button>
           <button v-if="!item.published" class="text-button danger" @click="remove(item)">удалить</button>
         </span>
       </div>
@@ -951,7 +964,10 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
 .tb-crumbs { color: var(--muted); font-size: var(--fs-xs); margin: 0 0 4px; }
 .tb-crumbs .text-button { font-size: var(--fs-xs); }
 
-.tb-table .table-row { grid-template-columns: minmax(220px, 2fr) .7fr .8fr 1.1fr 150px; }
+.tb-table .table-row { grid-template-columns: minmax(200px, 1.8fr) .6fr .75fr .85fr 1fr 150px; }
+.tb-agree b { display: block; font-size: var(--fs-sm); }
+.tb-agree b.bad { color: #9a6810; }
+.tb-agree b.muted { color: var(--muted); font-weight: 400; }
 .tb-open { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; font: inherit; }
 .tb-open b { display: block; font-size: var(--fs-sm); }
 .tb-open small { display: block; color: var(--muted); font-size: var(--fs-2xs); margin-top: 4px; }
@@ -1125,6 +1141,6 @@ const runRow = computed(() => rows.value.find(r => r.id === run.value?.assignmen
   .tb-crit-hidden, .tb-spreads { grid-template-columns: 1fr; }
   .tb-samples { flex-direction: column; }
   .tb-side > .card:first-child { position: static; }
-  .tb-table .table-row { min-width: 760px; }
+  .tb-table .table-row { min-width: 900px; }
 }
 </style>

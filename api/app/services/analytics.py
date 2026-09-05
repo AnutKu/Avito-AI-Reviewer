@@ -635,6 +635,45 @@ def collect_works(db: Session, assignments: list[Assignment]) -> list[WorkFact]:
     return list(facts.values())
 
 
+# Ниже какого числа решений доля согласия ничего не значит: одно принятое
+# решение — это «100%», и показать его рядом с сотней настоящих значит соврать.
+MIN_DECIDED_FOR_AGREEMENT = 3
+
+
+def agreement_by_assignment(db: Session, assignments: list[Assignment]) -> dict[UUID, dict]:
+    """Доля согласия ревьюеров с AI — по каждому заданию отдельно.
+
+    Возвращает и долю, и число решений, на которых она посчитана: без второго
+    первое невозможно взвесить. Пока решений мало, доля не считается вовсе —
+    вместо неё едет None, и экран говорит «мало данных», а не показывает 100%.
+    """
+
+    if not assignments:
+        return {}
+    rows = db.execute(
+        select(
+            Submission.assignment_id,
+            func.count(),
+            func.count(ReviewItem.id).filter(ReviewItem.reviewer_action == ReviewerAction.ACCEPTED),
+        )
+        .join(Review, Review.id == ReviewItem.review_id)
+        .join(Submission, Submission.id == Review.submission_id)
+        .where(
+            Submission.assignment_id.in_([item.id for item in assignments]),
+            ReviewItem.reviewer_action.in_(tuple(DECIDED_ACTIONS)),
+        )
+        .group_by(Submission.assignment_id)
+    ).all()
+    return {
+        assignment_id: {
+            "decided": decided,
+            "accepted": accepted,
+            "rate": share(accepted, decided) if decided >= MIN_DECIDED_FOR_AGREEMENT else None,
+        }
+        for assignment_id, decided, accepted in rows
+    }
+
+
 def collect_items(db: Session, assignments: list[Assignment]) -> list[ItemFact]:
     if not assignments:
         return []

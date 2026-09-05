@@ -560,3 +560,31 @@ def test_existing_criteria_are_passed_so_the_agent_does_not_repeat_them(methodis
         json={"max_score": 4, "existing": ["Метрики", "Выводы"]},
     )
     assert engine.last_existing == ["Метрики", "Выводы"]
+
+
+# --- согласие ревьюеров с AI, по каждому заданию ---------------------------
+
+
+def test_the_bank_shows_how_often_reviewers_agree_with_the_ai(methodist):
+    """Низкая доля — это не про плохой AI, а про критерии, по которым не сходятся."""
+
+    rows = methodist.get("/api/methodist/assignments").json()
+    scored = [r for r in rows if r["agreement"]["decided"]]
+    assert scored, "в демо-курсе есть проверенные работы — статистика должна быть"
+    for row in scored:
+        stat = row["agreement"]
+        assert 0 <= stat["accepted"] <= stat["decided"]
+        if stat["rate"] is not None:
+            assert 0 <= stat["rate"] <= 100
+
+
+def test_a_fresh_task_reports_no_agreement_instead_of_a_hundred_percent(methodist):
+    """Одно принятое решение — это «100%». Показать его рядом с сотней настоящих
+    значит соврать, поэтому до порога доля не считается вовсе."""
+
+    created = methodist.post(
+        "/api/methodist/assignments",
+        json={"title": "Свежее", "criteria": [{"title": "Метрики", "max_score": 4}]},
+    ).json()["id"]
+    row = next(r for r in methodist.get("/api/methodist/assignments").json() if r["id"] == created)
+    assert row["agreement"] == {"decided": 0, "accepted": 0, "rate": None}
