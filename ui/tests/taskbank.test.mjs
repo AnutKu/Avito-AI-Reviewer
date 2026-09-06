@@ -12,31 +12,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
-  cleanCriterion,
-  debtEmptyState,
-  debtFace,
-  debtLink,
-  criteriaTotal,
-  defaultPassScore,
-  describePenalty,
-  filledCriteria,
-  mergeCriterion,
-  penaltyForm,
-  penaltyPayload,
-  filterAssignments,
-  isDirty,
-  kindLabel,
-  openRecommendations,
-  publishBlockers,
-  personaAbout,
-  personaFace,
-  personaName,
-  runIntro,
-  runTitle,
-  runTypeFrom,
-  samplingNote,
-  scoreWarning,
-  splitByPublication,
+  cleanCriterion, criteriaTotal, debtEmptyState, debtFace, debtLink, defaultPassScore, describePenalty, filledCriteria, filterAssignments, isDirty, kindLabel, mergeCriterion, openRecommendations, passScoreIsAuto, penaltyForm, penaltyPayload, personaAbout, personaFace, personaName, publishBlockers, runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning, splitByPublication,
 } from '../src/shared/taskbank.js'
 import { parseHash } from '../src/shared/route.js'
 
@@ -392,5 +368,37 @@ describe('правило штрафа за просрочку', () => {
       describePenalty({ per_day: 1, unit: 'points', max_penalty: 3 }),
       '−1 б. за каждые начатые сутки просрочки, но не больше −3 б.',
     )
+  })
+})
+
+describe('проходной балл следует за критериями', () => {
+  const rubric = (...points) => points.map((max_score, i) => ({ key: `k${i}`, title: `К${i}`, max_score }))
+
+  it('совпадает с автоматическим — значит, его никто не выбирал', () => {
+    // 10 баллов по критериям → зачёт 6; это посчиталось само.
+    assert.equal(passScoreIsAuto(6, rubric(3, 3, 2, 2)), true)
+  })
+
+  it('отличается от автоматического — значит, порог задан осознанно', () => {
+    assert.equal(passScoreIsAuto(8, rubric(3, 3, 2, 2)), false)
+    assert.equal(passScoreIsAuto(4, rubric(3, 3, 2, 2)), false)
+  })
+
+  it('после правки разбалловки прежний порог перестаёт быть автоматическим', () => {
+    // Было 10 баллов и зачёт 6. Критерии переписали на 20 — зачёт должен стать 12.
+    const before = rubric(3, 3, 2, 2)
+    const after = rubric(6, 6, 4, 4)
+    assert.equal(passScoreIsAuto(6, before), true)
+    assert.equal(passScoreIsAuto(6, after), false)
+    assert.equal(defaultPassScore(after), 12)
+  })
+
+  it('пустая рубрика: нулевой порог автоматический, любой другой — нет', () => {
+    assert.equal(passScoreIsAuto(0, []), true)
+    assert.equal(passScoreIsAuto(1, []), false)
+  })
+
+  it('строка из поля ввода не ломает сравнение', () => {
+    assert.equal(passScoreIsAuto('6', rubric(3, 3, 2, 2)), true)
   })
 })

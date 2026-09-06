@@ -60,7 +60,13 @@ RESULTS = DATA / "ai_results.json"
 # объяснении наконец что-то значит.
 REVIEWER_ROTA = (0, 1, 0, 2, 0, 1, 2, 1, 0, 2, 0, 1)
 
-COURSE = "Авито Академия: разбор реальных ДЗ"
+COURSE = "Аналитика данных"
+
+# Курс однажды назывался иначе. Название — ключ, по которому сев отличает свой
+# курс от чужого, поэтому переименование нельзя просто закоммитить: уже поднятый
+# кабинет перестал бы узнавать собственные данные и объявил бы их чужими.
+# Старые имена переносятся на новое при первом же старте.
+LEGACY_COURSE_TITLES = ("Авито Академия: разбор реальных ДЗ",)
 
 
 METHODIST = ("methodist@demo.local", "Анна Воронова")
@@ -147,7 +153,20 @@ def solution_text(slug: str, level: str, source: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("<!--")).strip()
 
 
+def rename_legacy_course(db: Session) -> str | None:
+    """Перевести курс со старого названия на текущее. Возвращает прежнее имя."""
+
+    for old_title in LEGACY_COURSE_TITLES:
+        course = db.scalar(select(Course).where(Course.title == old_title))
+        if course is not None:
+            course.title = COURSE
+            db.commit()
+            return old_title
+    return None
+
+
 def load(db, *, now: datetime) -> dict:
+    rename_legacy_course(db)
     course = db.scalar(select(Course).where(Course.title == COURSE))
     if course is None:
         course = Course(
@@ -596,8 +615,14 @@ def prepare(db: Session, *, enabled: bool = True) -> dict:
             "action": "skipped",
             "reason": f"нет файла с разборами ({RESULTS}) — он не попал в образ?",
         }
+    renamed = rename_legacy_course(db)
     if is_loaded(db):
-        return {"action": "kept", "reason": "настоящий курс уже загружен"}
+        return {
+            "action": "kept",
+            "reason": f"курс переименован из «{renamed}» в «{COURSE}»"
+            if renamed
+            else "настоящий курс уже загружен",
+        }
 
     empty = db.scalar(select(Course.id).limit(1)) is None
     if not empty and not demo_is_untouched(db):

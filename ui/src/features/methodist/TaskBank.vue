@@ -10,7 +10,7 @@ import MarkdownText from '../../shared/ui/MarkdownText.vue'
 import {
   AI_BLOCKS, EXAMPLE, PERSONA_TYPE, RUN_STATE, SEVERITY, SOLUTIONS_NOTE, criteriaTotal,
   decidedRecommendations, fieldTitle, filterAssignments, isDirty, kindLabel, kindWhy,
-  cleanCriterion, defaultPassScore, describePenalty, filledCriteria, mergeCriterion,
+  cleanCriterion, defaultPassScore, describePenalty, filledCriteria, mergeCriterion, passScoreIsAuto,
   openRecommendations, penaltyForm, penaltyPayload, personaAbout, personaFace,
   personaName, publishBlockers, runIntro, runTitle, runTypeFrom, samplingNote, scoreWarning,
   splitByPublication,
@@ -238,8 +238,10 @@ async function openEditor() {
   if (!row) { error.value = 'Задание не найдено'; go(); return }
   draft.value = toDraft(row)
   saved.value = JSON.parse(JSON.stringify(draft.value))
-  // У сохранённого задания балл уже выбран человеком — не перебиваем его.
-  passTouched.value = true
+  // Не «задание сохранено — значит, балл выбрали», а «балл отличается от
+  // автоматического — значит, выбрали». Иначе правка разбалловки критериев
+  // оставляла порог от прежней суммы.
+  passTouched.value = !passScoreIsAuto(draft.value.pass_score, draft.value.criteria)
   penalty.value = penaltyForm(row.authoring?.late_penalty)
   highlight.value = focusCriterion.value
   try { runs.value = await api(`/methodist/assignments/${row.id}/ai-runs`) } catch { runs.value = [] }

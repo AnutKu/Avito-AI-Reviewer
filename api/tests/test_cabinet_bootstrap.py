@@ -45,6 +45,7 @@ def stub(monkeypatch):
         monkeypatch.setattr(loader, "RESULTS", FakeFile(results_exist))
         monkeypatch.setattr(loader, "is_loaded", lambda db: loaded)
         monkeypatch.setattr(loader, "demo_is_untouched", lambda db: db.demo_untouched)
+        monkeypatch.setattr(loader, "rename_legacy_course", lambda db: None)
 
         def wipe(db):
             db.wiped = True
@@ -123,3 +124,26 @@ def test_every_outcome_explains_itself(stub):
         (stub(FakeSession()), {"enabled": False}),
     ):
         assert loader.prepare(session, **kwargs)["reason"].strip()
+
+
+def test_course_rename_is_carried_over_not_treated_as_someone_elses(stub, monkeypatch):
+    """Переименование курса не должно превращать его в чужой.
+
+    Название — ключ, по которому старт отличает свой курс от заведённого руками.
+    Закоммитить новое имя без переноса значило бы, что поднятый кабинет объявит
+    собственные данные чужими и перестанет их обновлять."""
+
+    renamed = {}
+
+    def rename(db):
+        renamed["called"] = True
+        return loader.LEGACY_COURSE_TITLES[0]
+
+    session = stub(FakeSession(courses=["курс"]), loaded=True)
+    monkeypatch.setattr(loader, "rename_legacy_course", rename)
+    outcome = loader.prepare(session)
+
+    assert renamed.get("called"), "старое название не переносится"
+    assert outcome["action"] == "kept"
+    assert loader.COURSE in outcome["reason"]
+    assert not session.wiped
