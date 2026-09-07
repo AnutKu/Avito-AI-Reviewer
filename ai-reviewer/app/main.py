@@ -13,6 +13,7 @@ from .contracts import (
     ReviewRequest,
     ReviewResponse,
 )
+from .masking import MaskingUnavailable, status as masking_status
 from .reviewer import ZaiInvalidResponse, ZaiNotConfigured, ZaiReviewer
 
 
@@ -21,6 +22,11 @@ app = FastAPI(
     version="0.1.0",
     description="Isolated Z.AI GLM-5.3-Flash review and feedback service.",
 )
+
+# MaskingUnavailable отдаётся как 503, а не как 502 «ошибка провайдера»: с
+# провайдером всё в порядке, это у нас не поднялось маскирование. Разница не
+# косметическая — core api считает 503 детерминированным отказом и не повторяет
+# запрос, а повторять тут нечего: бандл модели от второй попытки не появится.
 
 
 @app.get("/health", tags=["system"])
@@ -31,6 +37,9 @@ def health() -> dict:
         "provider": "z.ai",
         "model": settings.zai_model,
         "configured": bool(settings.zai_api_key),
+        # Видно снаружи намеренно: «маскирование включено» — это то, что
+        # обещано пользователю, и проверять это по логам не должно быть нужно.
+        "masking": masking_status(),
     }
 
 
@@ -38,6 +47,8 @@ def health() -> dict:
 def create_review(payload: ReviewRequest) -> ReviewResponse:
     try:
         return ZaiReviewer().review(payload)
+    except MaskingUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     except ZaiNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ZaiInvalidResponse as exc:
@@ -50,6 +61,8 @@ def create_review(payload: ReviewRequest) -> ReviewResponse:
 def detect(payload: DetectionRequest) -> DetectionResponse:
     try:
         return ZaiReviewer().detect(payload)
+    except MaskingUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     except ZaiNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ZaiInvalidResponse as exc:
@@ -62,6 +75,8 @@ def detect(payload: DetectionRequest) -> DetectionResponse:
 def blitz_questions(payload: BlitzQuestionsRequest) -> BlitzQuestionsResponse:
     try:
         return ZaiReviewer().blitz_questions(payload)
+    except MaskingUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     except ZaiNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ZaiInvalidResponse as exc:
@@ -74,6 +89,8 @@ def blitz_questions(payload: BlitzQuestionsRequest) -> BlitzQuestionsResponse:
 def blitz_analysis(payload: BlitzAnalysisRequest) -> BlitzAnalysisResponse:
     try:
         return ZaiReviewer().blitz_analysis(payload)
+    except MaskingUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     except ZaiNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ZaiInvalidResponse as exc:
@@ -86,6 +103,8 @@ def blitz_analysis(payload: BlitzAnalysisRequest) -> BlitzAnalysisResponse:
 def rewrite_feedback(payload: FeedbackRequest) -> FeedbackResponse:
     try:
         return ZaiReviewer().rewrite_feedback(payload)
+    except MaskingUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     except ZaiNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ZaiInvalidResponse as exc:

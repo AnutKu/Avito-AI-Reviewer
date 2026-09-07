@@ -256,7 +256,24 @@ onUnmounted(() => {
       <button class="back" @click="emit('navigate', 'student-assignments')">← Все задания</button>
       <div class="page-heading compact"><div><h1>{{ detail.title }}</h1><p>{{ detail.course }} · дедлайн {{ formatDate(detail.deadline_at, true) }}</p></div></div>
       <div class="two-columns">
-        <article class="card prose-card"><h2>Условие</h2><MarkdownText :text="detail.statement" /><h2>Критерии оценки</h2><div v-for="criterion in detail.rubric" :key="criterion.key" class="criterion-short"><span>✓</span><b><MarkdownText inline :text="criterion.title" /></b><em>{{ criterion.max_score }} б.</em></div></article>
+        <article class="card prose-card">
+          <h2>Условие</h2>
+          <MarkdownText :text="detail.statement" />
+          <h2>Критерии оценки</h2>
+          <!-- Подсказка по критерию пишется методистом отдельным полем именно
+               для студента — и до этой правки никуда не выводилась: он видел
+               голое название и число баллов, а фраза о том, что от него ждут,
+               оставалась в редакторе задания. -->
+          <div v-for="(criterion, index) in detail.rubric" :key="criterion.key || index" class="criterion-short">
+            <span>✓</span>
+            <div class="criterion-body">
+              <b><MarkdownText inline :text="criterion.title" /></b>
+              <small v-if="criterion.student_hint"><MarkdownText inline :text="criterion.student_hint" /></small>
+            </div>
+            <em>{{ criterion.max_score }} б.</em>
+          </div>
+          <p v-if="detail.max_score != null" class="criterion-total">Всего {{ detail.max_score }} б.<template v-if="detail.pass_score"> · зачёт от {{ detail.pass_score }}</template></p>
+        </article>
         <!-- Работа сдаётся один раз. По «назад» сюда можно вернуться уже после
              отправки — тогда вместо формы показываем, что с работой сейчас. -->
         <aside v-if="detail.submission" class="card submit-card"><span class="card-icon blue">✓</span><h2>Работа отправлена</h2><p>Отправлена {{ formatDate(detail.submission.submitted_at, true) }}. Повторная сдача по заданию не предусмотрена.</p><StatusBadge :status="detail.submission.status" :labels="studentLabels" /><small>Результат появится в списке заданий, когда ревьюер опубликует его</small></aside>

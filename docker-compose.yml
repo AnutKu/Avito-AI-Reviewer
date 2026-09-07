@@ -17,8 +17,18 @@ services:
       retries: 20
 
   ai-reviewer:
-    build: ./ai-reviewer
+    build:
+      context: ./ai-reviewer
+      args:
+        # false — собрать образ без torch/transformers. Тогда и
+        # MASKING_ENABLED должен быть false, иначе сервис честно ответит 503.
+        WITH_MASKING: ${WITH_MASKING:-true}
     container_name: avito-ai-reviewer
+    # Бандл модели (700 МБ) монтируется, а не копируется в образ: в git его нет,
+    # и сборка из чистого клона на COPY просто падала бы. Только чтение — сервис
+    # в него не пишет.
+    volumes:
+      - ./anonimaze_model:/srv/anonimaze_model:ro
     environment:
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-glm-5.3-flash}
@@ -28,6 +38,12 @@ services:
       # поэтому ожидание не растёт, а токены — втрое: ставить больше трёх есть
       # смысл, только если вердикт по курсу заметно скачет от запуска к запуску.
       DETECTION_VOTES: ${DETECTION_VOTES:-3}
+      # Анонимизация перед отправкой в Z.AI. Провайдер видит плейсхолдеры,
+      # ревьюер — исходные значения: подстановка обратная. Выключенное
+      # маскирование означает, что решение студента уходит наружу как есть.
+      MASKING_ENABLED: ${MASKING_ENABLED:-true}
+      MASKING_MODEL_PATH: /srv/anonimaze_model
+      MASKING_DEVICE: ${MASKING_DEVICE:-cpu}
       # Один и тот же лимит у api и ai-reviewer: снапшот режет только тот,
       # кто его собирает. Расхождение = молча потерянный хвост решения.
       MAX_SNAPSHOT_CHARS: ${MAX_SNAPSHOT_CHARS:-120000}
