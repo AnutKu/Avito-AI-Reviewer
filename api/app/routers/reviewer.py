@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
@@ -373,12 +374,14 @@ def suggest_blitz(
         if item.get("direction", 0) > 0
     ]
     try:
+        started = time.monotonic()
         response = blitz_questions_with_retries(
             assignment=submission.assignment,
             snapshot=snapshot,
             count=payload.count,
             focus=focus,
         )
+        elapsed_ms = round((time.monotonic() - started) * 1000)
     except AiReviewerUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
     except AiReviewerError as exc:
@@ -396,7 +399,7 @@ def suggest_blitz(
         questions=[question.model_dump() for question in response.result.questions],
     )
     db.add(session)
-    persist_call(db, review.id, "blitz_questions", response.metadata)
+    persist_call(db, review.id, "blitz_questions", response.metadata, elapsed_ms)
     db.commit()
     return {"id": str(session.id), "status": session.status, "questions": session.questions}
 
@@ -527,18 +530,20 @@ def rewrite_feedback(
         if item.reviewer_action != ReviewerAction.REJECTED
     ]
     try:
+        started = time.monotonic()
         response = AiReviewerClient().rewrite_feedback(
             text=payload.text,
             tone_of_voice=submission.assignment.course.tone_of_voice,
             decisions=decisions,
         )
+        elapsed_ms = round((time.monotonic() - started) * 1000)
         suggestion = response.suggestion
         metadata = response.metadata
     except AiReviewerUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
     except AiReviewerError as exc:
         raise HTTPException(502, f"AI reviewer не смог переформулировать feedback: {exc}") from exc
-    persist_call(db, review.id, "feedback_copilot", metadata)
+    persist_call(db, review.id, "feedback_copilot", metadata, elapsed_ms)
     db.commit()
     return {
         "original": payload.text,

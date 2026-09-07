@@ -67,7 +67,13 @@ STALE_ERROR = (
 )
 
 
-def _record_call(db: Session, review_id: UUID, stage: str, metadata: ProviderMetadata) -> None:
+def _record_call(
+    db: Session,
+    review_id: UUID,
+    stage: str,
+    metadata: ProviderMetadata,
+    duration_ms: int = 0,
+) -> None:
     cost = (
         metadata.prompt_tokens * settings.zai_input_cost_per_million
         + metadata.completion_tokens * settings.zai_output_cost_per_million
@@ -81,13 +87,20 @@ def _record_call(db: Session, review_id: UUID, stage: str, metadata: ProviderMet
             tokens_in=metadata.prompt_tokens,
             tokens_out=metadata.completion_tokens,
             cost_usd=cost,
+            duration_ms=duration_ms,
             cache_hit=False,
         )
     )
 
 
-def persist_call(db: Session, review_id: UUID, stage: str, metadata: ProviderMetadata) -> None:
-    _record_call(db, review_id, stage, metadata)
+def persist_call(
+    db: Session,
+    review_id: UUID,
+    stage: str,
+    metadata: ProviderMetadata,
+    duration_ms: int = 0,
+) -> None:
+    _record_call(db, review_id, stage, metadata, duration_ms)
 
 
 def running_since(row: Review | AiDetection) -> datetime:
@@ -385,7 +398,9 @@ def run_detection(review_id: UUID) -> None:
             submission = db.get(Submission, review.submission_id)
             snapshot = db.query(Snapshot).filter(Snapshot.submission_id == submission.id).one()
             assignment = db.get(Assignment, submission.assignment_id)
+            started = time.monotonic()
             response = _detection_with_retries(assignment=assignment, snapshot=snapshot)
+            elapsed_ms = round((time.monotonic() - started) * 1000)
             score = detection_scale.compute(
                 parsed_facts=snapshot.parsed_facts,
                 snapshot_content=snapshot.content,
@@ -413,7 +428,7 @@ def run_detection(review_id: UUID) -> None:
                 "votes": list(response.vote.votes),
                 "agreement": response.vote.agreement,
             }
-            _record_call(db, review.id, "ai_detection", response.metadata)
+            _record_call(db, review.id, "ai_detection", response.metadata, elapsed_ms)
             _sync_ai_signal(db, review, detection, score)
             db.commit()
         except Exception as exc:
@@ -492,6 +507,7 @@ def run_blitz_analysis(session_id: UUID) -> None:
             review = db.get(Review, session.review_id)
             submission = db.get(Submission, review.submission_id)
             assignment = db.get(Assignment, submission.assignment_id)
+            started = time.monotonic()
             response = _blitz_analysis_with_retries(
                 assignment=assignment,
                 questions=session.questions,
@@ -503,6 +519,7 @@ def run_blitz_analysis(session_id: UUID) -> None:
                     for item in session.answers
                 ],
             )
+            elapsed_ms = round((time.monotonic() - started) * 1000)
             session.ai_analysis = {
                 "status": AiStatus.READY,
                 "assessments": [item.model_dump() for item in response.result.assessments],
@@ -510,7 +527,7 @@ def run_blitz_analysis(session_id: UUID) -> None:
                 "limitations": response.result.limitations,
                 "model": response.metadata.model,
             }
-            _record_call(db, review.id, "blitz_analysis", response.metadata)
+            _record_call(db, review.id, "blitz_analysis", response.metadata, elapsed_ms)
             db.commit()
         except Exception as exc:
             db.rollback()
@@ -546,11 +563,13 @@ def run_review(review_id: UUID) -> None:
             snapshot = db.query(Snapshot).filter(Snapshot.submission_id == submission.id).one()
             assignment = db.get(Assignment, submission.assignment_id)
             rubric = db.get(RubricVersion, review.rubric_version_id)
+            started = time.monotonic()
             response = _review_with_retries(
                 assignment=assignment,
                 rubric=rubric,
                 snapshot=snapshot,
             )
+            elapsed_ms = round((time.monotonic() - started) * 1000)
             result = response.result
             metadata = response.metadata
             rubric_by_key = {item["key"]: item for item in rubric.criteria}
@@ -592,7 +611,7 @@ def run_review(review_id: UUID) -> None:
                 "demo_data": False,
             }
             review.draft_feedback = result.draft_feedback
-            _record_call(db, review.id, "review", metadata)
+            _record_call(db, review.id, "review", metadata, elapsed_ms)
             notify_scoring_done(db, review)
             db.commit()
         except Exception as exc:

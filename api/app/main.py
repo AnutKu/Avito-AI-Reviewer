@@ -9,6 +9,7 @@ from .config import settings
 from .db import SessionLocal, engine
 from .models import Base
 from .routers import auth, common, methodist, reviewer, student
+from .real_course_loader import prepare as prepare_cabinet
 from .seed import seed_demo
 from .services.review_pipeline import recover_orphaned_detections, recover_orphaned_reviews
 from .services.task_ai import recover_orphaned_runs
@@ -30,6 +31,7 @@ _COLUMN_MIGRATIONS = (
     "ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS samples INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS late_penalty DOUBLE PRECISION NOT NULL DEFAULT 0",
     "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS late_penalty_note TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS duration_ms INTEGER NOT NULL DEFAULT 0",
     # Градация внутри критерия какое-то время называлась `rubric_levels` — так её
     # звали в движке. В кабинете она `levels`, и по этому имени её читает экран
     # ревьюера. Переименовываем ключ в уже сохранённых рубриках, иначе заведённая
@@ -46,6 +48,33 @@ _COLUMN_MIGRATIONS = (
 )
 
 
+def _fill_empty_cabinet(db) -> None:
+    """Чем наполнить кабинет на старте — и почему именно этим.
+
+    По умолчанию настоящим курсом: задания, критерии, работы студентов и
+    дословные ответы модели лежат в репозитории (`api/data/real_course`), так
+    что на новой машине достаточно поднять контейнеры. Ключ к модели не нужен —
+    разборы не пересчитываются, а читаются из файла.
+
+    Решение всегда пишется в лог. «Ничего не изменилось после обновления» —
+    самый частый вопрос про этот кусок запуска, и отвечать на него, читая код
+    по серверам, не должно быть нужно.
+    """
+
+    log = logging.getLogger("uvicorn.error")
+    outcome = prepare_cabinet(db, enabled=settings.real_course_on_start)
+    if outcome["action"] == "loaded":
+        log.info(
+            "курс из репозитория (%s): работ %s, разборов %s, закрыто %s",
+            outcome["reason"], outcome["works"], outcome["reviews"], outcome["closed"],
+        )
+        return
+    log.info("курс из репозитория не загружен: %s", outcome["reason"])
+    # Демонстрационный сев остаётся запасным вариантом — он и сам не тронет
+    # базу, в которой уже есть чужой курс.
+    seed_demo(db)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     del app
@@ -55,7 +84,7 @@ async def lifespan(app: FastAPI):
             connection.execute(text(statement))
     if settings.seed_on_start:
         with SessionLocal() as db:
-            seed_demo(db)
+            _fill_empty_cabinet(db)
     # AI-ревью выполняется в BackgroundTasks этого же процесса, поэтому всё, что
     # осталось в running, умерло вместе с предыдущим процессом. Без этого запись
     # висит в running навсегда и её нельзя ни перезапустить, ни завершить.
